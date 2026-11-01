@@ -16,10 +16,24 @@ export interface NoticeData {
   link: string;
 }
 
+/** 下发给客户端的代理商条目（与客户端 AgencyInfo 字段一一对应） */
+export interface AgencyWireItem {
+  id: string;
+  name: string;
+  url: string;
+  intro: string;
+  tags: string;
+  rating: number;
+  ratingCount: number;
+  sort: number;
+}
+
 /** SSE / 心跳统一下发格式：notice 为老客户端兼容串（标题或正文首行），noticeData 为结构化数据 */
 export interface NoticeEvent {
   notice: string;
   noticeData: NoticeData | null;
+  /** 客户端代理商列表；为空数组表示已全部撤下，缺省表示本次事件不涉及代理商 */
+  agencies?: AgencyWireItem[];
 }
 
 // 已建立的 SSE 连接（每个元素是一个尚未结束的 HTTP 响应）

@@ -17,6 +17,7 @@ import { authRequired } from './middleware/helpers';
 
 import clientRoutes from './routes/client';
 import noticeRoutes from './routes/notice';
+import agencyRoutes from './routes/agency';
 import siteRoutes from './routes/site';
 import seoRoutes from './routes/seo';
 import adminAuthRoutes from './routes/admin/auth';
@@ -29,11 +30,13 @@ import adminLogRoutes from './routes/admin/logs';
 import adminBatchRoutes from './routes/admin/batches';
 import adminUserRoutes from './routes/admin/users';
 import adminSiteRoutes from './routes/admin/site';
+import adminAgencyRoutes from './routes/admin/agencies';
 import { markExpiredKeys } from './services/KeyService';
 import { getConfigValue, processScheduledNotice } from './services/ConfigService';
 import { cleanExpiredData } from './services/LogService';
 import { cleanSiteVisitLogs, cleanSiteOnline } from './services/SiteAnalyticsService';
 import { cleanChannelClicks } from './services/ChannelService';
+import { cleanAgencyClicks, processScheduledAgencies } from './services/AgencyService';
 
 const app = express();
 const PORT = env.port;
@@ -117,6 +120,9 @@ app.use(API_PREFIX, clientRoutes);
 // ==================== 系统公告实时推送（SSE 长连接，无需登录） ====================
 app.use(API_PREFIX, noticeRoutes);
 
+// ==================== 客户端代理商点击埋点（无需登录） ====================
+app.use(API_PREFIX, agencyRoutes);
+
 // ==================== 官网公开只读接口（无需登录） ====================
 app.use('/api/site', siteRoutes);
 
@@ -134,6 +140,7 @@ app.use(`${ADMIN_PREFIX}`, authRequired, adminLogRoutes);
 app.use(`${ADMIN_PREFIX}`, authRequired, adminBatchRoutes);
 app.use(`${ADMIN_PREFIX}/users`, authRequired, adminUserRoutes);
 app.use(`${ADMIN_PREFIX}/site`, authRequired, adminSiteRoutes);
+app.use(`${ADMIN_PREFIX}/agencies`, authRequired, adminAgencyRoutes);
 
 // 404 与错误处理
 app.use(notFoundHandler);
@@ -196,6 +203,15 @@ async function main() {
       }
     });
 
+    // 定时任务：客户端代理商定时推送（与公告同机制，每分钟检查一次）
+    cron.schedule('* * * * *', async () => {
+      try {
+        await processScheduledAgencies();
+      } catch (e) {
+        log.error('定时代理商推送失败', e);
+      }
+    });
+
     // 定时任务：官网访问明细清理（保留 90 天，每日 03:30 执行，避免明细表无限增长爆盘）
     cron.schedule('30 3 * * *', async () => {
       try {
@@ -205,6 +221,8 @@ async function main() {
         if (o > 0) log.info(`官网在线状态清理：删除 ${o} 条超过 24 小时的在线上报记录`);
         const c = await cleanChannelClicks(90);
         if (c > 0) log.info(`官网渠道点击明细清理：删除 ${c} 条超过 90 天的记录`);
+        const a = await cleanAgencyClicks(90);
+        if (a > 0) log.info(`客户端代理商点击明细清理：删除 ${a} 条超过 90 天的记录`);
       } catch (e) {
         log.error('官网访问明细清理失败', e);
       }

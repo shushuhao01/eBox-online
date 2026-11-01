@@ -98,6 +98,7 @@ const menus = [
   { path: '/recycle-bin', meta: { title: '回收站', icon: 'Delete' } },
   { path: '/analytics', meta: { title: '使用分析', icon: 'TrendCharts' } },
   { path: '/heartbeats', meta: { title: '心跳日志', icon: 'Timer' } },
+  { path: '/agencies', meta: { title: '客户端代理商', icon: 'Shop' } },
   { path: '/site', meta: { title: '官网管理', icon: 'Platform' } },
   { path: '/settings', meta: { title: '系统设置', icon: 'Setting' } },
   { path: '/logs', meta: { title: '操作日志', icon: 'Document' } },

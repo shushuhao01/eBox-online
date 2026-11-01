@@ -5,6 +5,7 @@ import { ApiError } from '../middleware/errorHandler';
 import { clientActivate, clientHeartbeat, clientUnbind, findByCode, keyWithDetail } from '../services/KeyService';
 import { decodeAndVerify } from '../crypto/licenseCodec';
 import { getConfigValue } from '../services/ConfigService';
+import { getAgencyPayload } from '../services/AgencyService';
 import { AppDataSource } from '../config/database';
 import { Device } from '../entities/Device';
 
@@ -71,7 +72,8 @@ router.post('/heartbeat', async (req, res) => {
       appVersion: value.appVersion,
       clientTime: value.timestamp,
     });
-    ok(res, result);
+    // 代理商列表随心跳兜底下发（SSE 断线时仍能同步；客户端缺字段时保留本地缓存）
+    ok(res, { ...result, agencies: await getAgencyPayload() });
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);
     throw e;

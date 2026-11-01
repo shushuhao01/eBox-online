@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { addClient, removeClient } from '../services/NoticeBroadcaster';
-import { getNoticeEvent } from '../services/ConfigService';
+import { getConfigValue } from '../services/ConfigService';
+import { getClientEvent } from '../services/AgencyService';
 import { findByCode } from '../services/KeyService';
 import { AppDataSource } from '../config/database';
 import { Device } from '../entities/Device';
@@ -37,7 +38,7 @@ router.get('/notice/stream', async (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
 
-  addClient(res, await getNoticeEvent());
+  addClient(res, await getClientEvent());
 
   const cleanup = () => removeClient(res);
   req.on('close', cleanup);

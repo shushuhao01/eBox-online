@@ -137,6 +137,42 @@ const PATCH_TABLES: Array<{ table: string; columns: Array<{ name: string; ddl: s
   },
 ];
 
+// ==================== 客户端代理商点击明细表 ====================
+
+const AGENCY_CLICK_TABLE = 'client_agency_click';
+
+const AGENCY_CLICK_COLUMNS: Array<{ name: string; ddl: string }> = [
+  { name: 'agency_id', ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { name: 'agency_name', ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { name: 'click_id', ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { name: 'code', ddl: "VARCHAR(200) NOT NULL DEFAULT ''" },
+  { name: 'machine_fp', ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },
+  { name: 'env_name', ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { name: 'app_version', ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },
+  { name: 'ip', ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { name: 'country', ddl: "VARCHAR(16) NOT NULL DEFAULT ''" },
+  { name: 'province', ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },
+  { name: 'city', ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },
+  { name: 'isp', ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { name: 'device', ddl: "VARCHAR(16) NOT NULL DEFAULT 'unknown'" },
+  { name: 'os', ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },
+  { name: 'browser', ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },
+  { name: 'client_os', ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { name: 'referer', ddl: "VARCHAR(512) NOT NULL DEFAULT ''" },
+  { name: 'user_agent', ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },
+  { name: 'created_at', ddl: 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP' },
+];
+
+const CREATE_AGENCY_CLICK_SQL = `
+CREATE TABLE IF NOT EXISTS \`${AGENCY_CLICK_TABLE}\` (
+  \`id\` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+${AGENCY_CLICK_COLUMNS.map((c) => `  \`${c.name}\` ${c.ddl}`).join(',\n')},
+  KEY \`idx_cac_agency\` (\`agency_id\`),
+  KEY \`idx_cac_code\` (\`code\`),
+  KEY \`idx_cac_machine\` (\`machine_fp\`),
+  KEY \`idx_cac_created\` (\`created_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
+
 // ==================== 系统配置表（公告正文等长文本存储） ====================
 
 const CREATE_SYSTEM_CONFIG_SQL = `
@@ -199,6 +235,9 @@ export async function ensureSchema(): Promise<void> {
     await ensureColumns(runner, CHANNEL_CLICK_TABLE, CHANNEL_CLICK_COLUMNS);
     await runner.query(CREATE_CHANNEL_STATS_SQL);
     await ensureColumns(runner, CHANNEL_STATS_TABLE, CHANNEL_STATS_COLUMNS);
+    // 客户端代理商点击明细（后台「客户端代理商 → 数据分析」数据源）
+    await runner.query(CREATE_AGENCY_CLICK_SQL);
+    await ensureColumns(runner, AGENCY_CLICK_TABLE, AGENCY_CLICK_COLUMNS);
     // 系统配置表：公告正文要求 TEXT，表不存在时后端自建
     await runner.query(CREATE_SYSTEM_CONFIG_SQL);
     await ensureSystemConfigText(runner);

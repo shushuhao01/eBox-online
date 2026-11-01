@@ -26,6 +26,7 @@ import { SiteOnline } from '../entities/SiteOnline';
 import { SiteChannelLink } from '../entities/SiteChannelLink';
 import { SiteChannelClick } from '../entities/SiteChannelClick';
 import { SiteChannelStatsDaily } from '../entities/SiteChannelStatsDaily';
+import { ClientAgencyClick } from '../entities/ClientAgencyClick';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -42,6 +43,7 @@ export const AppDataSource = new DataSource({
     SiteMedia, SiteDownloadMirror, SiteAccessRule, SiteStatsDaily,
     SiteVisitLog, SiteOnline,
     SiteChannelLink, SiteChannelClick, SiteChannelStatsDaily,
+    ClientAgencyClick,
   ],
   synchronize: false, // 表结构由 database/schema.sql 管理，禁止自动同步
   logging: false,
