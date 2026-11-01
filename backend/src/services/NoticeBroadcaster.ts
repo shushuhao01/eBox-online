@@ -21,6 +21,7 @@ export interface AgencyWireItem {
   id: string;
   name: string;
   url: string;
+  guideUrl: string;
   intro: string;
   tags: string;
   rating: number;
