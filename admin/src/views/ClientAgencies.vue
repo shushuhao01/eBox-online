@@ -1,5 +1,5 @@
 <template>
-  <div class="site-panel">
+  <div class="page-container agency-page">
     <div class="sub-toolbar">
       <el-radio-group v-model="days" size="default" @change="onQuickRange">
         <el-radio-button :value="7">近 7 天</el-radio-button>
@@ -154,9 +154,9 @@
             <el-card shadow="never" class="chart-card">
               <template #header>
                 <span class="chart-title">每日汇总</span>
-                <span class="chart-sub">点击次数 / 独立设备</span>
+                <span class="chart-sub">点击次数 / 独立设备 · 默认最新 10 天，可翻页查看更早日期</span>
               </template>
-              <el-table :data="dailyRows" size="small" stripe height="320">
+              <el-table :data="dailyRows" size="small" stripe>
                 <el-table-column label="日期" prop="date" width="120" />
                 <el-table-column label="点击次数" prop="clicks" width="120" align="right" />
                 <el-table-column label="独立设备" prop="devices" width="120" align="right" />
@@ -166,6 +166,16 @@
                   </template>
                 </el-table-column>
               </el-table>
+              <div class="visit-pager">
+                <el-pagination
+                  v-model:current-page="dailyPage"
+                  v-model:page-size="dailyPageSize"
+                  :total="dailyRowsAll.length"
+                  :page-sizes="[10, 20, 30]"
+                  layout="total, sizes, prev, pager, next"
+                  background
+                />
+              </div>
             </el-card>
           </el-tab-pane>
 
@@ -219,7 +229,7 @@
               <el-table-column label="环境 / 版本" min-width="140" show-overflow-tooltip>
                 <template #default="{ row }">
                   <div>{{ row.envName || '-' }}</div>
-                  <div class="dim">v{{ row.appVersion || '-' }}</div>
+                  <div class="dim">{{ versionLabel(row.appVersion) }}</div>
                 </template>
               </el-table-column>
               <el-table-column label="IP" width="140">
@@ -239,9 +249,6 @@
               </el-table-column>
               <el-table-column label="客户端系统" prop="clientOs" width="110" show-overflow-tooltip />
               <el-table-column label="点击 ID" prop="clickId" width="150" show-overflow-tooltip />
-              <el-table-column label="来源" min-width="180" show-overflow-tooltip>
-                <template #default="{ row }">{{ row.referer || '-' }}</template>
-              </el-table-column>
               <el-table-column label="User-Agent" min-width="200" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.userAgent || '-' }}</template>
               </el-table-column>
@@ -537,7 +544,24 @@ function percent(v: number): number {
   return Math.min(100, Math.round((v / max) * 100))
 }
 
-const dailyRows = computed(() => (analytics.value?.daily || []).slice().reverse())
+/** 每日汇总：按日期倒序（最新在前），默认每页 10 天，翻页查看更早日期 */
+const dailyRowsAll = computed(() => (analytics.value?.daily || []).slice().reverse())
+const dailyPage = ref(1)
+const dailyPageSize = ref(10)
+const dailyRows = computed(() => {
+  const start = (dailyPage.value - 1) * dailyPageSize.value
+  return dailyRowsAll.value.slice(start, start + dailyPageSize.value)
+})
+watch(dailyPageSize, () => {
+  dailyPage.value = 1
+})
+
+/** 版本号统一加一个 v 前缀（客户端上报的 appVersion 本身可能已带 v） */
+function versionLabel(v: string | undefined | null): string {
+  const s = String(v || '').trim()
+  if (!s) return '-'
+  return /^v/i.test(s) ? s : `v${s}`
+}
 
 // ==================== 图表 ====================
 
@@ -710,6 +734,7 @@ async function loadAnalytics() {
   try {
     const r = effectiveRange.value
     analytics.value = await getAgencyAnalytics(r.days, r.start || undefined, r.end || undefined)
+    dailyPage.value = 1
   } catch {
     // 拦截器已提示
   } finally {
@@ -1012,11 +1037,20 @@ onBeforeUnmount(() => {
   }
 }
 
+.agency-page {
+  min-width: 0;
+
+  :deep(.el-tabs__content) {
+    overflow: visible;
+  }
+}
+
 .sub-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  margin-bottom: 14px;
+  row-gap: 8px;
 
   .spinning {
     animation: refresh-spin 0.8s linear infinite;
