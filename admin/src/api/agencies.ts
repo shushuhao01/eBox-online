@@ -7,6 +7,8 @@ export interface AgencyItem {
   id: string
   name: string
   url: string
+  /** 使用指南链接（配置方法/购买步骤，客户端「配置指南」按钮打开，可空） */
+  guideUrl: string
   intro: string
   tags: string
   rating: number

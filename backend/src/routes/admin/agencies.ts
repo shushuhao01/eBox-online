@@ -20,6 +20,7 @@ const itemSchema = Joi.object({
   id: Joi.string().allow('', null).max(64).default(''),
   name: Joi.string().trim().min(1).max(64).required(),
   url: Joi.string().trim().min(1).max(512).uri({ scheme: ['http', 'https'] }).required(),
+  guideUrl: Joi.string().trim().allow('', null).max(512).uri({ scheme: ['http', 'https'] }).default(''),
   intro: Joi.string().allow('', null).max(255).default(''),
   tags: Joi.string().allow('', null).max(128).default(''),
   rating: Joi.number().min(0).max(5).default(0),

@@ -20,6 +20,8 @@ export interface AgencyItem {
   id: string;
   name: string;
   url: string;
+  /** 使用指南链接（配置方法/购买步骤，客户端「配置指南」按钮打开，可空） */
+  guideUrl: string;
   intro: string;
   tags: string;
   rating: number;
@@ -60,6 +62,7 @@ export function normalizeAgency(raw: Partial<AgencyItem> | null | undefined, ind
     id: text(raw.id, 64) || `ag-${Date.now().toString(36)}-${index}`,
     name,
     url,
+    guideUrl: text(raw.guideUrl, 512),
     intro: text(raw.intro, 255),
     tags: text(raw.tags, 128),
     rating: Math.round(clampNum(raw.rating, 0, 5) * 10) / 10,

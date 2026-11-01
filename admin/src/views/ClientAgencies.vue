@@ -312,18 +312,23 @@
         </div>
 
         <el-table :data="list" stripe class="agency-table" row-key="id">
-          <el-table-column label="#" type="index" width="48" />
+          <el-table-column label="#" type="index" width="44" />
           <el-table-column label="代理商名称" width="150">
             <template #default="{ row }">
               <el-input v-model="row.name" placeholder="必填，如：XX 加速" maxlength="64" />
             </template>
           </el-table-column>
-          <el-table-column label="连接地址" min-width="230">
+          <el-table-column label="连接地址" min-width="210">
             <template #default="{ row }">
               <el-input v-model="row.url" placeholder="https://example.com/register" maxlength="512" />
             </template>
           </el-table-column>
-          <el-table-column label="简介" min-width="200">
+          <el-table-column label="使用指南" min-width="200">
+            <template #default="{ row }">
+              <el-input v-model="row.guideUrl" placeholder="配置教程链接（选填）" maxlength="512" />
+            </template>
+          </el-table-column>
+          <el-table-column label="简介" min-width="180">
             <template #default="{ row }">
               <el-input v-model="row.intro" placeholder="一句话介绍（选填）" maxlength="255" />
             </template>
@@ -333,7 +338,7 @@
               <el-input v-model="row.tags" placeholder="逗号分隔" maxlength="128" />
             </template>
           </el-table-column>
-          <el-table-column label="评分 / 人数" width="170">
+          <el-table-column label="评分 / 人数" width="168">
             <template #default="{ row }">
               <div class="rating-cell">
                 <el-rate v-model="row.rating" allow-half :max="5" size="small" />
@@ -341,17 +346,17 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="排序" width="100">
+          <el-table-column label="排序" width="90">
             <template #default="{ row }">
               <el-input-number v-model="row.sort" :min="-9999" :max="9999" size="small" :controls="false" class="sort-input" />
             </template>
           </el-table-column>
-          <el-table-column label="启用" width="76" align="center">
+          <el-table-column label="启用" width="72" align="center">
             <template #default="{ row }">
               <el-switch v-model="row.enabled" :active-value="1" :inactive-value="0" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="76" align="center" fixed="right">
+          <el-table-column label="操作" width="72" align="center" fixed="right">
             <template #default="{ $index }">
               <el-button link type="danger" :icon="Delete" @click="removeAgency($index)" />
             </template>
@@ -842,6 +847,7 @@ function addAgency() {
     id: newId(),
     name: '',
     url: '',
+    guideUrl: '',
     intro: '',
     tags: '',
     rating: 0,
@@ -879,8 +885,14 @@ function validateList(): boolean {
       ElMessage.warning(`「${name}」的连接地址需以 http:// 或 https:// 开头，且不能包含空格`)
       return false
     }
+    const guideUrl = (a.guideUrl || '').trim()
+    if (guideUrl && !/^https?:\/\/[^\s]+$/i.test(guideUrl)) {
+      ElMessage.warning(`「${name}」的使用指南链接需以 http:// 或 https:// 开头，且不能包含空格（没有可留空）`)
+      return false
+    }
     a.name = name
     a.url = url
+    a.guideUrl = guideUrl
   }
   return true
 }
@@ -890,6 +902,7 @@ function normalizeList(): AgencyItem[] {
     ...a,
     name: a.name.trim(),
     url: a.url.trim(),
+    guideUrl: (a.guideUrl || '').trim(),
     intro: (a.intro || '').trim(),
     tags: (a.tags || '').trim(),
   }))
