@@ -3,11 +3,28 @@
     <div class="toolbar-card">
       <span class="page-title">套餐与档位</span>
       <div class="toolbar-right">
-        <span class="hint">商城链接保存后立即推送在线客户端</span>
+        <span class="hint">续费/升级链接保存后立即推送在线客户端</span>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
         <el-button :icon="Promotion" :loading="pushing" @click="handleRepush">重推配置</el-button>
         <el-button type="primary" :icon="Check" :loading="saving" @click="handleSave">保存并推送</el-button>
       </div>
+    </div>
+
+    <div class="table-card">
+      <div class="card-head">
+        <span class="card-title">升级码商城链接（4 个档位）</span>
+        <span class="hint">同一档位不同时长共用此链接；留空则该档位不显示去购买</span>
+      </div>
+      <el-form label-width="150px" class="upgrade-form">
+        <el-form-item v-for="g in UPGRADE_GROUPS" :key="g.key" :label="g.label">
+          <el-input
+            v-model="upgradeUrls[g.key]"
+            placeholder="https://mall.example.com/upgrade"
+            clearable
+            style="max-width: 480px"
+          />
+        </el-form-item>
+      </el-form>
     </div>
 
     <div class="table-card">
@@ -34,11 +51,11 @@
           <template #default="{ row }">{{ DURATION_TEXT[row.duration] || row.duration }}</template>
         </el-table-column>
         <el-table-column label="席位" width="80" align="center" prop="seats" />
-        <el-table-column label="商城链接" min-width="300">
+        <el-table-column label="续费链接" min-width="300">
           <template #default="{ row }">
             <el-input
               v-model="row.mallUrl"
-              placeholder="留空表示联系客服 / 不展示外链"
+              placeholder="续费按钮跳转的商城链接，留空不显示续费按钮"
               clearable
               size="small"
             />
@@ -61,70 +78,97 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Check, Promotion } from '@element-plus/icons-vue'
-import { getSkus, updateSku, toggleSku, saveUpgradeLinks, type SkuItem } from '@/api/mall'
+import { getSkus, updateSku, toggleSku, getUpgradeLinks, saveUpgradeLinks, type SkuItem } from '@/api/mall'
 
 type Row = SkuItem & { _originalUrl: string; _toggling?: boolean }
 
 const DURATION_TEXT: Record<string, string> = { month: '月', quarter: '季', year: '年', permanent: '永久' }
 
+/** 升级链接按 (version, level) 分 4 组，同组内不同时长共用链接 */
+const UPGRADE_GROUPS: Array<{ key: string; label: string; version: number; level: number }> = [
+  { key: 'v1l1', label: '个人普通版（v1l1）', version: 1, level: 1 },
+  { key: 'v1l2', label: '个人高级版（v1l2）', version: 1, level: 2 },
+  { key: 'v2l1', label: '企业普通版（v2l1）', version: 2, level: 1 },
+  { key: 'v2l2', label: '企业高级版（v2l2）', version: 2, level: 2 },
+]
+
 const list = ref<Row[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const pushing = ref(false)
+const upgradeUrls = reactive<Record<string, string>>({ v1l1: '', v1l2: '', v2l1: '', v2l2: '' })
 
 async function load() {
   loading.value = true
   try {
-    const rows = await getSkus()
+    const [rows, state] = await Promise.all([getSkus(), getUpgradeLinks()])
     list.value = rows.map((r) => ({ ...r, mallUrl: r.mallUrl || '', _originalUrl: r.mallUrl || '' }))
+    for (const g of UPGRADE_GROUPS) {
+      const hit = list.value.find(
+        (r) => r.version === g.version && r.level === g.level && !!state.links[r.code]
+      )
+      upgradeUrls[g.key] = hit ? state.links[hit.code] : ''
+    }
   } finally {
     loading.value = false
   }
 }
 
-/** 保存：变更 SKU 链接 + 推送配置（SSE） */
-async function handleSave() {
+/** 把每组链接展开写入该组全部 SKU code */
+function buildUpgradeLinks(): Record<string, string> {
+  const links: Record<string, string> = {}
+  for (const g of UPGRADE_GROUPS) {
+    const url = (upgradeUrls[g.key] || '').trim()
+    if (!url) continue
+    for (const r of list.value) {
+      if (r.version === g.version && r.level === g.level) links[r.code] = url
+    }
+  }
+  return links
+}
+
+/** 保存续费链接（SKU.mallUrl），返回变更条数 */
+async function persistRenewalLinks(): Promise<number> {
   const changed = list.value.filter((r) => (r.mallUrl || '') !== r._originalUrl)
+  for (const row of changed) {
+    await updateSku(row.id, {
+      code: row.code,
+      version: row.version,
+      level: row.level,
+      duration: row.duration,
+      durationDays: row.durationDays,
+      label: row.label,
+      seats: row.seats,
+      mallUrl: row.mallUrl || null,
+      sort: row.sort,
+      enabled: row.enabled,
+    })
+  }
+  return changed.length
+}
+
+/** 保存：续费链接写 SKU，升级链接写 app_configs，推送配置（SSE） */
+async function handleSave() {
   saving.value = true
   try {
-    for (const row of changed) {
-      await updateSku(row.id, {
-        code: row.code,
-        version: row.version,
-        level: row.level,
-        duration: row.duration,
-        durationDays: row.durationDays,
-        label: row.label,
-        seats: row.seats,
-        mallUrl: row.mallUrl || null,
-        sort: row.sort,
-        enabled: row.enabled,
-      })
-    }
-    const links: Record<string, string> = {}
-    for (const r of list.value) {
-      if (r.mallUrl) links[r.code] = r.mallUrl
-    }
-    const res = await saveUpgradeLinks(links)
-    ElMessage.success(`已保存 ${changed.length} 项，配置已推送（在线客户端 ${res.delivered} 个）`)
+    const changed = await persistRenewalLinks()
+    const res = await saveUpgradeLinks({ links: buildUpgradeLinks() })
+    ElMessage.success(`已保存 ${changed} 项，配置已推送（在线客户端 ${res.delivered} 个）`)
     await load()
   } finally {
     saving.value = false
   }
 }
 
-/** 重推：不修改内容，仅重新广播当前配置 */
+/** 重推：提交当前续费与升级链接，并重新广播配置 */
 async function handleRepush() {
   pushing.value = true
   try {
-    const links: Record<string, string> = {}
-    for (const r of list.value) {
-      if (r.mallUrl) links[r.code] = r.mallUrl
-    }
-    const res = await saveUpgradeLinks(links)
+    await persistRenewalLinks()
+    const res = await saveUpgradeLinks({ links: buildUpgradeLinks() })
     ElMessage.success(`配置已重推（在线客户端 ${res.delivered} 个）`)
   } finally {
     pushing.value = false
@@ -156,6 +200,18 @@ onMounted(load)
   font-size: 12px;
   color: var(--text-secondary);
   margin-right: 4px;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.card-title {
+  font-weight: 600;
+}
+.upgrade-form :deep(.el-form-item) {
+  margin-bottom: 12px;
 }
 .foot-hint {
   margin-top: 10px;

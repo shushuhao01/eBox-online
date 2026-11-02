@@ -23,6 +23,8 @@ export interface NotifyConfig {
   notify_wecom_url: string
   notify_email_to: string
   notify_sms_phone: string
+  notify_admin_email: string
+  notify_admin_phone: string
   notify_global_enabled: string
 }
 
@@ -31,6 +33,7 @@ export interface NotificationTemplateRow {
   code: string
   name: string
   category: string | null
+  audience: string
   title: string | null
   content: string | null
   channels: string
@@ -46,6 +49,7 @@ export interface TemplatePayload {
   code?: string
   name: string
   category?: string
+  audience?: 'user' | 'admin'
   title?: string
   content?: string
   channels: string[]
@@ -75,6 +79,7 @@ export interface TemplateQuery {
   pageSize?: number
   keyword?: string
   category?: string
+  audience?: string
 }
 
 /** 读取邮件 / 短信 / 通知渠道配置 */

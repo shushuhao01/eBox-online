@@ -19,6 +19,10 @@ export class NotificationTemplate {
   @Column({ type: 'varchar', length: 32, nullable: true })
   category!: string | null;
 
+  /** 受众：user=发给用户（收件人取用户邮箱/手机号），admin=发给管理员（取管理员收件配置） */
+  @Column({ type: 'varchar', length: 16, default: 'user' })
+  audience!: string;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   title!: string | null;
 

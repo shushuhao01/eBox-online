@@ -212,8 +212,8 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="席位">
-          <el-input-number v-model="genForm.seats" :min="1" :max="1000" :disabled="genForm.version !== 2" />
-          <span class="text-secondary" style="margin-left: 8px">（企业版填席位总数；个人版固定 1）</span>
+          <el-input-number v-model="genForm.seats" :min="1" :max="1000" />
+          <span class="text-secondary" style="margin-left: 8px">（默认 1，可按需调整；企业版填席位总数）</span>
         </el-form-item>
         <el-form-item label="档位编码">
           <el-input v-model="genForm.tierCode" placeholder="可选，对应套餐 SKU 编码" maxlength="32" style="width: 300px" />
@@ -658,7 +658,7 @@ async function submitGenerate() {
     remark: genForm.remark || null,
     version: genForm.version,
     level: genForm.level,
-    seats: genForm.version === 2 ? genForm.seats : 1,
+    seats: genForm.seats,
     tierCode: genForm.tierCode.trim() || null,
   }
   generating.value = true

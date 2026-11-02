@@ -71,6 +71,16 @@ export function isPhoneLike(v: string): boolean {
   return /^\d{6,20}$/.test(v);
 }
 
+/** 账号：3-32 位字母或数字（不含符号与中文） */
+export function isAccountLike(v: string): boolean {
+  return /^[A-Za-z0-9]{3,32}$/.test(v);
+}
+
+/** 昵称：汉字 / 字母 / 数字，1-32 位 */
+export function isNicknameLike(v: string): boolean {
+  return /^[\u4e00-\u9fa5A-Za-z0-9]{1,32}$/.test(v);
+}
+
 export function assertPasswordStrength(password: string): void {
   if (!/^(?=.*[A-Za-z])(?=.*\d).{8,64}$/.test(password)) {
     throw new ApiError('密码需至少 8 位，且包含字母和数字', 1002);
@@ -104,21 +114,37 @@ export async function recordAgreements(
 // ---------------------------------------------------------------------------
 export async function registerAccount(input: RegisterInput): Promise<Account> {
   const login = normalizeLogin(input.login);
-  if (!isEmailLike(login) && !isPhoneLike(login)) {
-    throw new ApiError('请输入有效的手机号或邮箱', 1003);
+  if (!isAccountLike(login)) {
+    throw new ApiError('账号需为 3-32 位字母或数字', 1003);
   }
   assertPasswordStrength(input.password);
 
-  const exists = await accountRepo().findOneBy({ login });
-  if (exists) throw new ApiError('该账号已注册，请直接登录', 1004);
+  const nickname = String(input.nickname || '').trim();
+  if (nickname && !isNicknameLike(nickname)) {
+    throw new ApiError('昵称仅支持汉字、字母和数字', 1020);
+  }
+  const emailRaw = String(input.email || '').trim();
+  if (emailRaw && !isEmailLike(emailRaw)) {
+    throw new ApiError('请输入有效的邮箱地址', 1021);
+  }
+  const email = emailRaw ? emailRaw.toLowerCase() : null;
+  const phoneRaw = String(input.phone || '').trim();
+  if (phoneRaw && !isPhoneLike(phoneRaw)) {
+    throw new ApiError('请输入有效的手机号', 1022);
+  }
+  const phone = phoneRaw || null;
 
-  const email = input.email ? normalizeLogin(input.email) : isEmailLike(login) ? login : null;
-  const phone = input.phone ? input.phone.trim() : isPhoneLike(login) ? login : null;
+  // 账号唯一性：忽略大小写，避免与库内已有账号撞户
+  const exists = await accountRepo()
+    .createQueryBuilder('a')
+    .where('LOWER(a.login) = LOWER(:login)', { login })
+    .getOne();
+  if (exists) throw new ApiError('该账号已被占用，请更换', 1004);
 
   const account = accountRepo().create({
     login,
     passwordHash: await hashPassword(input.password),
-    nickname: input.nickname?.trim() || null,
+    nickname: nickname || null,
     email,
     phone,
     status: 1,
@@ -139,8 +165,18 @@ export async function registerAccount(input: RegisterInput): Promise<Account> {
     input.deviceFp ?? '',
     input.ip ?? ''
   );
+  const displayName = saved.nickname || login;
   // 注册成功通知（失败不影响注册主流程）
-  void sendTemplate('REGISTER', { username: saved.nickname || login, email: email || '' });
+  void sendTemplate('REGISTER', { username: displayName, email: email || '' });
+  // 管理员侧：新用户注册提醒
+  void sendTemplate('ADMIN_ACCOUNT_REGISTERED', {
+    username: displayName,
+    login,
+    account: login,
+    email: email || '未填写',
+    phone: phone || '未填写',
+    ip: input.ip || '',
+  });
   return saved;
 }
 
@@ -246,6 +282,15 @@ export async function loginAccount(input: LoginInput): Promise<LoginResult> {
       account.status = 3;
     }
     await accountRepo().save(account);
+    if (account.lockCount >= MAX_LOGIN_FAILS) {
+      void sendTemplate('ADMIN_ACCOUNT_LOCKED', {
+        username: account.nickname || account.login,
+        login: account.login,
+        account: account.login,
+        minutes: LOCK_MINUTES,
+        ip: input.ip || '',
+      });
+    }
     throw invalid;
   }
 
@@ -402,14 +447,16 @@ export async function getAppConfigValue(key: string): Promise<string> {
 export interface ClientConfigPayload {
   disclaimerVersion: number;
   upgradeLinks: Record<string, string>;
+  seatAddonMallUrl: string;
   ipResourceVersion: number;
 }
 
 export async function getClientConfig(): Promise<ClientConfigPayload> {
-  const [linksRaw, disclaimerRaw, ipVersionRaw] = await Promise.all([
+  const [linksRaw, disclaimerRaw, ipVersionRaw, seatAddonMallUrl] = await Promise.all([
     getAppConfigValue('upgrade_links'),
     getAppConfigValue('disclaimer_version'),
     getAppConfigValue('ip_resource_version'),
+    getAppConfigValue('seat_addon_mall_url'),
   ]);
   let upgradeLinks: Record<string, string> = {};
   if (linksRaw) {
@@ -425,6 +472,7 @@ export async function getClientConfig(): Promise<ClientConfigPayload> {
   return {
     disclaimerVersion: Math.max(1, Number(disclaimerRaw) || 1),
     upgradeLinks,
+    seatAddonMallUrl,
     ipResourceVersion: Math.max(1, Number(ipVersionRaw) || 1),
   };
 }
@@ -524,4 +572,13 @@ export async function resetPasswordByCode(input: { login: string; code: string; 
   if (account.status === 3) account.status = 1;
   await accountRepo().save(account);
   await revokeAccountSessions(account.id);
+  const displayName = account.nickname || account.login;
+  // 用户侧：密码已重置；管理员侧：安全提醒
+  void sendTemplate('PASSWORD_RESET_SUCCESS', { username: displayName, email: account.email || '' });
+  void sendTemplate('ADMIN_PASSWORD_RESET', {
+    username: displayName,
+    login: account.login,
+    account: account.login,
+    email: account.email || '未填写',
+  });
 }

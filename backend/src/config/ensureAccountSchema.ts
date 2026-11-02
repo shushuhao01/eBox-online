@@ -276,6 +276,7 @@ CREATE TABLE IF NOT EXISTS \`notification_templates\` (
   \`code\` VARCHAR(64) NOT NULL,
   \`name\` VARCHAR(128) NOT NULL,
   \`category\` VARCHAR(32) NULL,
+  \`audience\` VARCHAR(16) NOT NULL DEFAULT 'user' COMMENT 'user=用户模板 admin=管理员模板',
   \`title\` VARCHAR(255) NULL,
   \`content\` TEXT NULL,
   \`channels\` VARCHAR(128) NOT NULL DEFAULT '',
@@ -359,6 +360,11 @@ const DEVICE_COLUMNS: Array<{ name: string; ddl: string }> = [
 /** skus 增量字段（M6 能力覆盖，可空） */
 const SKU_COLUMNS: Array<{ name: string; ddl: string }> = [
   { name: 'caps_json', ddl: 'TEXT NULL' },
+];
+
+/** notification_templates 增量字段（受众：用户 / 管理员） */
+const NOTIFICATION_TEMPLATE_COLUMNS: Array<{ name: string; ddl: string }> = [
+  { name: 'audience', ddl: "VARCHAR(16) NOT NULL DEFAULT 'user' AFTER `category`" },
 ];
 
 /** upgrade_codes 增量字段（M6 金额与备注） */
@@ -456,37 +462,60 @@ async function seedAppConfigs(runner: QueryRunner): Promise<void> {
   await runner.query(
     `INSERT IGNORE INTO \`app_configs\` (\`cfg_key\`, \`cfg_value\`, \`remark\`) VALUES
       ('upgrade_links', '{}', '商城升级链接 JSON（按 SKU code 配置）'),
+      ('seat_addon_mall_url', '', '扩容码商城链接'),
       ('config_version', '1', '客户端配置版本号（任意配置变更自增，用于 SSE 增量推送）'),
       ('disclaimer_version', '1', '免责声明/用户协议版本'),
       ('smtp_host', '', 'SMTP 主机，空则找回密码走人工'),
-      ('ip_resource_version', '1', 'IP 资源变更版本号')`
+      ('ip_resource_version', '1', 'IP 资源变更版本号'),
+      ('notify_admin_email', '', '管理员收件邮箱（用户注册/激活/安全提醒），多个用逗号分隔'),
+      ('notify_admin_phone', '', '管理员收件手机号（管理员短信模板），多个用逗号分隔')`
   );
 }
 
-/** 内置消息模板（INSERT IGNORE：已存在则保留运营修改） */
+/** 内置消息模板（INSERT IGNORE：已存在则保留运营修改）
+ *  audience：user=发给用户（邮件/短信取用户自己的邮箱与手机号）；admin=发给管理员（取管理员收件配置）
+ */
 async function seedNotificationTemplates(runner: QueryRunner): Promise<void> {
   await runner.query(
     `INSERT IGNORE INTO \`notification_templates\`
-      (\`code\`, \`name\`, \`category\`, \`title\`, \`content\`, \`channels\`, \`sms_template_code\`, \`is_enabled\`, \`auto_trigger\`, \`sort_order\`)
+      (\`code\`, \`name\`, \`category\`, \`audience\`, \`title\`, \`content\`, \`channels\`, \`sms_template_code\`, \`is_enabled\`, \`auto_trigger\`, \`sort_order\`)
      VALUES
-      ('REGISTER', '注册成功', 'account', '欢迎加入 eBox',
-       '您好 {username}，您的 eBox 账号已注册成功。\\n\\n如有疑问请联系客服，祝您使用愉快。',
+      ('REGISTER', '注册成功', 'account', 'user', '欢迎加入 eBox',
+       '您好 {username}，您的 eBox 账号已注册成功。\\n\\n账号：{login}\\n如有疑问请联系客服，祝您使用愉快。',
        'SYSTEM,EMAIL', NULL, 1, 1, 10),
-      ('PASSWORD_RESET_CODE', '找回密码验证码', 'account', 'eBox 账号密码重置验证码',
+      ('PASSWORD_RESET_CODE', '找回密码验证码', 'account', 'user', 'eBox 账号密码重置验证码',
        '您好 {username}：\\n\\n您正在找回 eBox 账号的登录密码，验证码：{code}\\n\\n验证码 {minutes} 分钟内有效。如非本人操作，请忽略本邮件。\\n\\n{site_name}',
        'EMAIL', NULL, 1, 1, 20),
-      ('PASSWORD_CHANGED', '密码已修改', 'account', '账号密码已修改',
+      ('PASSWORD_CHANGED', '密码已修改', 'account', 'user', '账号密码已修改',
        '您好 {username}，您的账号密码已于 {time} 修改。如非本人操作，请立即联系客服。',
        'SYSTEM', NULL, 1, 1, 30),
-      ('LICENSE_ACTIVATED', '授权激活成功', 'license', '授权激活成功',
+      ('PASSWORD_RESET_SUCCESS', '密码重置成功', 'account', 'user', '账号密码已重置',
+       '您好 {username}，您的 eBox 账号密码已通过邮箱验证码重置成功。\\n\\n如非本人操作，请立即联系管理员冻结账号。',
+       'SYSTEM,EMAIL', NULL, 1, 1, 35),
+      ('LICENSE_ACTIVATED', '授权激活成功', 'license', 'user', '授权激活成功',
        '您好 {username}，您的授权已激活成功。\\n版本：{tier_text}\\n到期时间：{expire_at}',
        'SYSTEM', NULL, 1, 1, 40),
-      ('LICENSE_EXPIRING', '授权临期提醒', 'license', '授权即将到期',
+      ('LICENSE_EXPIRING', '授权临期提醒', 'license', 'user', '授权即将到期',
        '您好 {username}，您的授权将在 {days} 天后到期（{expire_at}），请及时续费以免影响使用。',
        'SYSTEM,EMAIL', NULL, 1, 1, 50),
-      ('VERSION_UPGRADE', '版本升级通知', 'system', 'eBox 新版本 {version}',
+      ('VERSION_UPGRADE', '版本升级通知', 'system', 'user', 'eBox 新版本 {version}',
        'eBox 已发布新版本 {version}。\\n更新内容：\\n{changelog}\\n请前往官网下载更新。',
-       'SYSTEM,DINGTALK,WECOM,EMAIL', NULL, 1, 1, 60)`
+       'SYSTEM,DINGTALK,WECOM,EMAIL', NULL, 1, 1, 60),
+      ('ADMIN_ACCOUNT_REGISTERED', '新用户注册提醒', 'account', 'admin', '新用户注册：{login}',
+       '有新用户完成注册。\\n\\n账号：{login}\\n昵称：{username}\\n邮箱：{email}\\n手机号：{phone}\\nIP：{ip}\\n时间：{time}',
+       'SYSTEM,EMAIL', NULL, 1, 1, 110),
+      ('ADMIN_ACCOUNT_LOCKED', '账号锁定提醒', 'account', 'admin', '账号登录异常锁定：{login}',
+       '账号因连续登录失败已临时锁定。\\n\\n账号：{login}\\n昵称：{username}\\n锁定 {minutes} 分钟\\nIP：{ip}\\n时间：{time}',
+       'SYSTEM,EMAIL', NULL, 1, 1, 120),
+      ('ADMIN_PASSWORD_RESET', '密码重置提醒', 'account', 'admin', '账号密码已重置：{login}',
+       '用户通过邮箱验证码重置了密码。\\n\\n账号：{login}\\n昵称：{username}\\n邮箱：{email}\\n时间：{time}',
+       'SYSTEM,EMAIL', NULL, 1, 1, 130),
+      ('ADMIN_LICENSE_ACTIVATED', '授权激活提醒', 'license', 'admin', '授权激活：{login}',
+       '用户完成授权激活 / 续费 / 升级。\\n\\n账号：{login}\\n昵称：{username}\\n档位：{tier_text}\\n到期时间：{expire_at}\\n时间：{time}',
+       'SYSTEM,EMAIL', NULL, 1, 1, 140),
+      ('ADMIN_LICENSE_EXPIRING', '临期授权汇总', 'license', 'admin', '授权临期汇总（{days} 天内）',
+       '有 {count} 个授权将在 {days} 天内到期，请关注续费情况。\\n\\n时间：{time}',
+       'SYSTEM,EMAIL', NULL, 1, 1, 150)`
   );
 }
 
@@ -520,6 +549,7 @@ export async function ensureAccountSchema(): Promise<void> {
     await ensureColumns(runner, 'skus', SKU_COLUMNS);
     await ensureColumns(runner, 'upgrade_codes', UPGRADE_CODE_COLUMNS);
     await ensureColumns(runner, 'seat_addons', SEAT_ADDON_COLUMNS);
+    await ensureColumns(runner, 'notification_templates', NOTIFICATION_TEMPLATE_COLUMNS);
 
     await seedSkus(runner);
     await seedAppConfigs(runner);

@@ -47,6 +47,8 @@ const CONFIG_KEYS = [
   'notify_wecom_url',
   'notify_email_to',
   'notify_sms_phone',
+  'notify_admin_email',
+  'notify_admin_phone',
   'notify_global_enabled',
 ] as const;
 
@@ -97,6 +99,8 @@ const configSchema = Joi.object({
   notify_wecom_url: Joi.string().allow('').max(500).optional(),
   notify_email_to: Joi.string().allow('').max(500).optional(),
   notify_sms_phone: Joi.string().allow('').max(500).optional(),
+  notify_admin_email: Joi.string().allow('').max(500).optional(),
+  notify_admin_phone: Joi.string().allow('').max(500).optional(),
   notify_global_enabled: Joi.string().valid('0', '1').optional(),
 });
 
@@ -195,6 +199,7 @@ const templateSchema = Joi.object({
     .required(),
   name: Joi.string().trim().max(128).required(),
   category: Joi.string().allow('', null).max(32).default(''),
+  audience: Joi.string().valid('user', 'admin').default('user'),
   title: Joi.string().allow('', null).max(255).default(''),
   content: Joi.string().allow('', null).default(''),
   channels: Joi.alternatives().try(Joi.array().items(Joi.string()), Joi.string()).default([]),
@@ -209,9 +214,11 @@ router.get('/templates', async (req, res) => {
   const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || '20'), 10) || 20));
   const keyword = String(req.query.keyword || '').trim();
   const category = String(req.query.category || '').trim();
+  const audience = String(req.query.audience || '').trim();
 
   const qb = templateRepo().createQueryBuilder('t');
   if (category) qb.andWhere('t.category = :category', { category });
+  if (audience === 'user' || audience === 'admin') qb.andWhere('t.audience = :audience', { audience });
   if (keyword) {
     qb.andWhere('(t.code LIKE :kw OR t.name LIKE :kw OR t.title LIKE :kw)', { kw: `%${keyword}%` });
   }
@@ -238,6 +245,7 @@ router.post('/templates', async (req, res) => {
       code,
       name: String(v.name),
       category: (v.category as string) || null,
+      audience: String(v.audience) === 'admin' ? 'admin' : 'user',
       title: (v.title as string) || null,
       content: (v.content as string) || '',
       channels: normalizeChannels(v.channels),
@@ -263,6 +271,7 @@ router.put('/templates/:id', async (req, res) => {
   // code 不可修改
   if (v.name !== undefined) row.name = String(v.name);
   if (v.category !== undefined) row.category = (v.category as string) || null;
+  if (v.audience !== undefined) row.audience = String(v.audience) === 'admin' ? 'admin' : 'user';
   if (v.title !== undefined) row.title = (v.title as string) || null;
   if (v.content !== undefined) row.content = (v.content as string) || '';
   if (v.channels !== undefined) row.channels = normalizeChannels(v.channels);

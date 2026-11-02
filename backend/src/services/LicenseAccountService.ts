@@ -276,6 +276,14 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
     tier_text: tierText,
     expire_at: expireText,
   });
+  void sendTemplate('ADMIN_LICENSE_ACTIVATED', {
+    username: freshAccount.nickname || freshAccount.login,
+    login: freshAccount.login,
+    account: freshAccount.login,
+    email: freshAccount.email || '未填写',
+    tier_text: tierText,
+    expire_at: expireText,
+  });
   return {
     entitlements,
     key: toKeySummary(key, key.id),

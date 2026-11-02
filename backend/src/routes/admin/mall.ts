@@ -9,7 +9,8 @@ import {
   updateSku,
   toggleSku,
   getUpgradeLinks,
-  saveUpgradeLinks,
+  getSeatAddonMallUrl,
+  saveMallConfig,
   buildClientConfig,
 } from '../../services/SkuService';
 import {
@@ -105,22 +106,32 @@ router.post('/skus/:id/toggle', async (req, res) => {
 
 // GET /api/admin/upgrade-links
 router.get('/upgrade-links', async (_req, res) => {
-  ok(res, { links: await getUpgradeLinks(), config: await buildClientConfig() });
+  ok(res, {
+    links: await getUpgradeLinks(),
+    seatAddonMallUrl: await getSeatAddonMallUrl(),
+    config: await buildClientConfig(),
+  });
 });
 
 // PUT /api/admin/upgrade-links（保存即推送）
 router.put('/upgrade-links', async (req, res) => {
   const { error, value } = Joi.object({
-    links: Joi.object().pattern(Joi.string(), Joi.string().allow('').max(512)).required(),
-  }).validate(req.body);
+    links: Joi.object().pattern(Joi.string(), Joi.string().allow('').max(512)).optional(),
+    seatAddonMallUrl: Joi.string().allow('').max(512).optional(),
+  })
+    .or('links', 'seatAddonMallUrl')
+    .validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   try {
-    const result = await saveUpgradeLinks(value.links as Record<string, unknown>);
+    const result = await saveMallConfig({
+      upgradeLinks: value.links as Record<string, unknown> | undefined,
+      seatAddonMallUrl: value.seatAddonMallUrl as string | undefined,
+    });
     await writeOperationLog(
       req.auth!.userId,
-      '修改商城升级链接',
+      '修改商城链接',
       '套餐与档位',
-      JSON.stringify(value.links),
+      JSON.stringify({ links: value.links ?? null, seatAddonMallUrl: value.seatAddonMallUrl ?? null }),
       clientIp(req)
     );
     ok(res, { ...result.config, delivered: result.delivered });

@@ -14,10 +14,22 @@
           background-color="transparent"
           router
         >
-          <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
-            <el-icon><component :is="item.meta.icon" /></el-icon>
-            <template #title>{{ item.meta.title }}</template>
-          </el-menu-item>
+          <template v-for="group in visibleMenus" :key="group.kind === 'group' ? group.key : group.path">
+            <el-sub-menu v-if="group.kind === 'group'" :index="group.key" popper-class="sidebar-submenu">
+              <template #title>
+                <el-icon><component :is="group.icon" /></el-icon>
+                <span>{{ group.title }}</span>
+              </template>
+              <el-menu-item v-for="item in group.children" :key="item.path" :index="item.path">
+                <el-icon><component :is="item.icon" /></el-icon>
+                <template #title>{{ item.title }}</template>
+              </el-menu-item>
+            </el-sub-menu>
+            <el-menu-item v-else :index="group.path">
+              <el-icon><component :is="group.icon" /></el-icon>
+              <template #title>{{ group.title }}</template>
+            </el-menu-item>
+          </template>
         </el-menu>
       </el-scrollbar>
     </aside>
@@ -33,7 +45,8 @@
           </el-icon>
           <el-breadcrumb separator="/">
             <el-breadcrumb-item :to="{ path: '/dashboard' }">首页</el-breadcrumb-item>
-            <el-breadcrumb-item v-if="currentMenu">{{ currentMenu.meta.title }}</el-breadcrumb-item>
+            <el-breadcrumb-item v-if="currentMenu?.group">{{ currentMenu.group }}</el-breadcrumb-item>
+            <el-breadcrumb-item v-if="currentMenu">{{ currentMenu.title }}</el-breadcrumb-item>
           </el-breadcrumb>
         </div>
         <div class="header-right">
@@ -76,7 +89,6 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
-import type { MenuMeta } from '@/router'
 
 const store = useUserStore()
 const route = useRoute()
@@ -87,33 +99,118 @@ const collapsed = ref(false)
 const displayName = computed(() => store.displayName)
 
 /** 菜单项：过滤仅超管可见 */
-const menus = [
-  { path: '/dashboard', meta: { title: '总览', icon: 'DataAnalysis' } },
-  { path: '/accounts', meta: { title: '账号管理', icon: 'UserFilled' } },
-  { path: '/enterprises', meta: { title: '企业管理', icon: 'OfficeBuilding' } },
-  { path: '/licenses', meta: { title: '激活码管理', icon: 'Key' } },
-  { path: '/batches', meta: { title: '码批次', icon: 'Collection' } },
-  { path: '/customers', meta: { title: '客户管理', icon: 'User' } },
-  { path: '/mall', meta: { title: '套餐与档位', icon: 'ShoppingCart' } },
-  { path: '/seat-addons', meta: { title: '席位扩容码', icon: 'Ticket' } },
-  { path: '/ip-resources', meta: { title: 'IP 资源', icon: 'Connection' } },
-  { path: '/devices', meta: { title: '设备管理', icon: 'Monitor' } },
-  { path: '/unbind-logs', meta: { title: '换机记录', icon: 'Refresh' } },
-  { path: '/revoke-logs', meta: { title: '作废记录', icon: 'CircleClose' } },
-  { path: '/recycle-bin', meta: { title: '回收站', icon: 'Delete' } },
-  { path: '/analytics', meta: { title: '使用分析', icon: 'TrendCharts' } },
-  { path: '/heartbeats', meta: { title: '心跳日志', icon: 'Timer' } },
-  { path: '/agencies', meta: { title: '客户端代理商', icon: 'Shop' } },
-  { path: '/site', meta: { title: '官网管理', icon: 'Platform' } },
-  { path: '/marketing', meta: { title: '营销管理', icon: 'Promotion' } },
-  { path: '/settings', meta: { title: '系统设置', icon: 'Setting' } },
-  { path: '/logs', meta: { title: '操作日志', icon: 'Document' } },
-  { path: '/users', meta: { title: '管理员', icon: 'Lock', superOnly: true } },
+interface MenuItem {
+  title: string
+  path: string
+  icon: string
+  superOnly?: boolean
+}
+
+interface MenuGroup {
+  kind: 'group'
+  key: string
+  title: string
+  icon: string
+  children: MenuItem[]
+}
+
+interface MenuEntry extends MenuItem {
+  kind: 'item'
+}
+
+type MenuNode = MenuGroup | MenuEntry
+
+/**
+ * 左侧菜单一二级分组：条目过多的扁平菜单按业务归类，减少视觉噪音。
+ * 官网管理 / 客户端代理商 / 营销管理保持独立一级入口。
+ */
+const menus: MenuNode[] = [
+  { kind: 'item', path: '/dashboard', title: '总览', icon: 'DataAnalysis' },
+  {
+    kind: 'group',
+    key: 'enterprise',
+    title: '企业与客户',
+    icon: 'OfficeBuilding',
+    children: [
+      { title: '企业管理', path: '/enterprises', icon: 'OfficeBuilding' },
+      { title: '账号管理', path: '/accounts', icon: 'UserFilled' },
+      { title: '客户管理', path: '/customers', icon: 'User' },
+    ],
+  },
+  {
+    kind: 'group',
+    key: 'codes',
+    title: '激活码与扩容',
+    icon: 'Key',
+    children: [
+      { title: '激活码管理', path: '/licenses', icon: 'Key' },
+      { title: '码批次', path: '/batches', icon: 'Collection' },
+      { title: '席位扩容码', path: '/seat-addons', icon: 'Ticket' },
+    ],
+  },
+  {
+    kind: 'group',
+    key: 'resources',
+    title: '套餐与资源',
+    icon: 'ShoppingCart',
+    children: [
+      { title: '套餐与档位', path: '/mall', icon: 'ShoppingCart' },
+      { title: 'IP 资源', path: '/ip-resources', icon: 'Connection' },
+    ],
+  },
+  {
+    kind: 'group',
+    key: 'records',
+    title: '日志与记录',
+    icon: 'Document',
+    children: [
+      { title: '设备管理', path: '/devices', icon: 'Monitor' },
+      { title: '换机记录', path: '/unbind-logs', icon: 'Refresh' },
+      { title: '作废记录', path: '/revoke-logs', icon: 'CircleClose' },
+      { title: '心跳日志', path: '/heartbeats', icon: 'Timer' },
+      { title: '使用分析', path: '/analytics', icon: 'TrendCharts' },
+      { title: '操作日志', path: '/logs', icon: 'Document' },
+    ],
+  },
+  { kind: 'item', path: '/site', title: '官网管理', icon: 'Platform' },
+  { kind: 'item', path: '/agencies', title: '客户端代理商', icon: 'Shop' },
+  { kind: 'item', path: '/marketing', title: '营销管理', icon: 'Promotion' },
+  {
+    kind: 'group',
+    key: 'system',
+    title: '系统管理',
+    icon: 'Setting',
+    children: [
+      { title: '管理员', path: '/users', icon: 'Lock', superOnly: true },
+      { title: '回收站', path: '/recycle-bin', icon: 'Delete' },
+      { title: '系统设置', path: '/settings', icon: 'Setting' },
+    ],
+  },
 ]
 
-const visibleMenus = computed(() => menus.filter((m) => !(m.meta as MenuMeta).superOnly || store.isSuperAdmin))
+const visibleMenus = computed<MenuNode[]>(() =>
+  menus
+    .map((node) => {
+      if (node.kind === 'item') {
+        return node.superOnly && !store.isSuperAdmin ? null : node
+      }
+      const children = node.children.filter((item) => !item.superOnly || store.isSuperAdmin)
+      return children.length ? { ...node, children } : null
+    })
+    .filter((node): node is MenuNode => node !== null),
+)
 
-const currentMenu = computed(() => menus.find((m) => m.path === route.path))
+const currentMenu = computed(() => {
+  for (const node of menus) {
+    if (node.kind === 'item') {
+      if (node.path === route.path) return { title: node.title, group: '' }
+    } else {
+      const item = node.children.find((child) => child.path === route.path)
+      if (item) return { title: item.title, group: node.title }
+    }
+  }
+  return null
+})
 
 // ============ 服务健康 ============
 const health = ref(true)
@@ -197,7 +294,8 @@ async function onCommand(cmd: string) {
   :deep(.el-menu) {
     border-right: none;
 
-    .el-menu-item {
+    .el-menu-item,
+    .el-sub-menu__title {
       color: #a8b6d4;
       height: 46px;
       margin: 2px 8px;
@@ -207,11 +305,23 @@ async function onCommand(cmd: string) {
         background: rgba(58, 122, 254, 0.15);
         color: #fff;
       }
+    }
 
-      &.is-active {
-        background: var(--primary-color);
-        color: #fff;
-      }
+    .el-menu-item.is-active {
+      background: var(--primary-color);
+      color: #fff;
+    }
+
+    // 一级分组展开时标题保持高亮，便于定位当前业务域
+    .el-sub-menu.is-active > .el-sub-menu__title {
+      color: #fff;
+    }
+
+    // 二级菜单项缩小高度并缩进，层级更清晰
+    .el-sub-menu .el-menu-item {
+      height: 40px;
+      padding-left: 44px !important;
+      font-size: 13px;
     }
   }
 }
@@ -298,5 +408,33 @@ async function onCommand(cmd: string) {
 .content {
   flex: 1;
   overflow: auto;
+}
+</style>
+
+<!-- 折叠态下二级菜单通过 teleport 渲染到 body，scoped 样式覆盖不到，需全局样式 -->
+<style lang="scss">
+.sidebar-submenu {
+  .el-menu--popup {
+    background: #17233d;
+    padding: 6px;
+    min-width: 168px;
+  }
+
+  .el-menu-item {
+    color: #a8b6d4;
+    height: 40px;
+    margin: 2px 0;
+    border-radius: 6px;
+
+    &:hover {
+      background: rgba(58, 122, 254, 0.15);
+      color: #fff;
+    }
+
+    &.is-active {
+      background: var(--primary-color);
+      color: #fff;
+    }
+  }
 }
 </style>

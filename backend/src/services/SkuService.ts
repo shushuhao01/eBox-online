@@ -41,6 +41,7 @@ export interface ClientTierView {
 export interface ClientConfigView {
   disclaimerVersion: number;
   upgradeLinks: Record<string, string>;
+  seatAddonMallUrl: string;
   ipResourceVersion: number;
   configVersion: number;
   tiers: ClientTierView[];
@@ -92,6 +93,11 @@ export async function getUpgradeLinks(): Promise<Record<string, string>> {
   }
 }
 
+/** 扩容码商城链接（客户端「去商城购买」跳转，空=不展示按钮） */
+export async function getSeatAddonMallUrl(): Promise<string> {
+  return getConfigValue('seat_addon_mall_url', '');
+}
+
 function parsePositive(raw: string, fallback: number): number {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
@@ -99,8 +105,9 @@ function parsePositive(raw: string, fallback: number): number {
 
 /** 客户端配置整包（/api/config/client 与 SSE config 事件同构） */
 export async function buildClientConfig(): Promise<ClientConfigView> {
-  const [links, disclaimerRaw, ipVersionRaw, configVersionRaw, skus] = await Promise.all([
+  const [links, seatAddonMallUrl, disclaimerRaw, ipVersionRaw, configVersionRaw, skus] = await Promise.all([
     getUpgradeLinks(),
+    getSeatAddonMallUrl(),
     getConfigValue('disclaimer_version', '1'),
     getConfigValue('ip_resource_version', '1'),
     getConfigValue('config_version', '1'),
@@ -109,6 +116,7 @@ export async function buildClientConfig(): Promise<ClientConfigView> {
   return {
     disclaimerVersion: parsePositive(disclaimerRaw, 1),
     upgradeLinks: links,
+    seatAddonMallUrl,
     ipResourceVersion: parsePositive(ipVersionRaw, 1),
     configVersion: parsePositive(configVersionRaw, 1),
     tiers: skus.map((s) => ({
@@ -119,9 +127,51 @@ export async function buildClientConfig(): Promise<ClientConfigView> {
       durationDays: s.durationDays,
       label: s.label,
       seats: s.seats,
-      mallUrl: s.mallUrl || links[s.code] || '',
+      mallUrl: s.mallUrl || '',
     })),
   };
+}
+
+export interface SaveMallConfigInput {
+  upgradeLinks?: Record<string, unknown>;
+  seatAddonMallUrl?: string;
+}
+
+export interface SaveMallConfigResult {
+  config: ClientConfigView;
+  delivered: number;
+}
+
+/** 保存商城链接：仅接受已存在 SKU 的 code，URL 必须 http(s) 或空（空=联系客服） */
+export async function saveMallConfig(input: SaveMallConfigInput): Promise<SaveMallConfigResult> {
+  if (input.upgradeLinks === undefined && input.seatAddonMallUrl === undefined) {
+    throw new ApiError('至少需要提交升级链接或扩容码商城链接', 400, 400);
+  }
+  if (input.upgradeLinks !== undefined) {
+    const skus = await skuRepo().find();
+    const codeSet = new Set(skus.map((s) => s.code));
+    const links: Record<string, string> = {};
+    for (const [code, raw] of Object.entries(input.upgradeLinks)) {
+      if (!codeSet.has(code)) throw new ApiError(`未知套餐编码：${code}`, 400, 400);
+      const url = String(raw ?? '').trim();
+      if (!url) continue;
+      if (!/^https?:\/\//i.test(url)) throw new ApiError(`套餐 ${code} 的链接必须以 http(s):// 开头`, 400, 400);
+      links[code] = url;
+    }
+    await saveConfigValue('upgrade_links', JSON.stringify(links), '商城升级链接 JSON（按 SKU code 配置）');
+  }
+  if (input.seatAddonMallUrl !== undefined) {
+    const url = String(input.seatAddonMallUrl ?? '').trim();
+    if (url && !/^https?:\/\//i.test(url)) {
+      throw new ApiError('扩容码商城链接必须以 http(s):// 开头', 400, 400);
+    }
+    await saveConfigValue('seat_addon_mall_url', url, '扩容码商城链接');
+  }
+  const nextVersion = parsePositive(await getConfigValue('config_version', '1'), 1) + 1;
+  await saveConfigValue('config_version', String(nextVersion), '客户端配置版本号');
+  const config = await buildClientConfig();
+  const delivered = broadcastConfig({ ...config, serverTime: Math.floor(Date.now() / 1000) });
+  return { config, delivered };
 }
 
 export interface SaveUpgradeLinksResult {
@@ -129,24 +179,9 @@ export interface SaveUpgradeLinksResult {
   delivered: number;
 }
 
-/** 保存商城链接：仅接受已存在 SKU 的 code，URL 必须 http(s) 或空（空=联系客服） */
+/** 兼容旧调用：仅保存升级链接 */
 export async function saveUpgradeLinks(input: Record<string, unknown>): Promise<SaveUpgradeLinksResult> {
-  const skus = await skuRepo().find();
-  const codeSet = new Set(skus.map((s) => s.code));
-  const links: Record<string, string> = {};
-  for (const [code, raw] of Object.entries(input)) {
-    if (!codeSet.has(code)) throw new ApiError(`未知套餐编码：${code}`, 400, 400);
-    const url = String(raw ?? '').trim();
-    if (!url) continue;
-    if (!/^https?:\/\//i.test(url)) throw new ApiError(`套餐 ${code} 的链接必须以 http(s):// 开头`, 400, 400);
-    links[code] = url;
-  }
-  await saveConfigValue('upgrade_links', JSON.stringify(links), '商城升级链接 JSON（按 SKU code 配置）');
-  const nextVersion = parsePositive(await getConfigValue('config_version', '1'), 1) + 1;
-  await saveConfigValue('config_version', String(nextVersion), '客户端配置版本号');
-  const config = await buildClientConfig();
-  const delivered = broadcastConfig({ ...config, serverTime: Math.floor(Date.now() / 1000) });
-  return { config, delivered };
+  return saveMallConfig({ upgradeLinks: input });
 }
 
 export interface SkuInput {

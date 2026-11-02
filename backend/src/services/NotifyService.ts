@@ -91,15 +91,36 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** 简单 HTML 包裹（暂不做可视化模板） */
-function wrapHtml(title: string, content: string): string {
+/** 邮件 HTML 排版：品牌头 + 标题卡片 + 正文 + 页脚（表格布局，兼容主流邮箱客户端） */
+function wrapHtml(title: string, content: string, siteName = 'eBox'): string {
+  const site = escapeHtml(siteName || 'eBox');
+  const safeTitle = escapeHtml(title || site);
+  const body = escapeHtml(content).replace(/\r?\n/g, '<br>');
+  const year = new Date().getFullYear();
   return [
-    '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>',
-    '<body style="margin:0;padding:24px;background:#f5f6fa;font-family:Arial,\'Microsoft YaHei\',sans-serif;color:#333;">',
-    '<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:8px;padding:24px;">',
-    `<h2 style="margin:0 0 16px;font-size:18px;color:#1f2d3d;">${escapeHtml(title)}</h2>`,
-    `<div style="white-space:pre-wrap;font-size:14px;line-height:1.7;">${escapeHtml(content)}</div>`,
-    '</div></body></html>',
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    `<title>${safeTitle}</title></head>`,
+    '<body style="margin:0;padding:0;background:#eef2f9;">',
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f9;padding:32px 12px;">',
+    '<tr><td align="center">',
+    '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 24px rgba(23,43,77,0.08);font-family:-apple-system,\'Segoe UI\',\'Microsoft YaHei\',Arial,sans-serif;">',
+    '<tr><td style="background:#2563eb;padding:22px 32px;">',
+    `<div style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:.5px;">${site}</div>`,
+    '<div style="margin-top:4px;font-size:12px;color:rgba(255,255,255,.78);">授权服务通知</div>',
+    '</td></tr>',
+    '<tr><td style="padding:32px 32px 8px;">',
+    `<div style="font-size:19px;font-weight:700;color:#17203a;line-height:1.5;">${safeTitle}</div>`,
+    '<div style="margin-top:18px;height:3px;width:44px;background:#2563eb;border-radius:2px;"></div>',
+    `<div style="margin-top:20px;font-size:14px;line-height:1.9;color:#3c4661;word-break:break-word;">${body}</div>`,
+    '</td></tr>',
+    '<tr><td style="padding:24px 32px 32px;">',
+    '<div style="height:1px;background:#edf0f7;"></div>',
+    '<div style="margin-top:16px;font-size:12px;line-height:1.8;color:#98a1b8;">',
+    `此邮件由 ${site} 授权服务系统自动发送，请勿直接回复。<br>`,
+    `如非本人操作或存在疑问，请及时联系客服。© ${year} ${site}`,
+    '</div></td></tr>',
+    '</table></td></tr></table></body></html>',
   ].join('');
 }
 
@@ -197,17 +218,45 @@ async function sendWecom(title: string, content: string): Promise<NotifyChannelR
   return channelResult('WECOM', 'ok', '已发送');
 }
 
-async function sendEmailChannel(title: string, content: string, force: boolean): Promise<NotifyChannelResult> {
+function isAdminAudience(template: NotificationTemplate): boolean {
+  return String(template.audience || '').toLowerCase() === 'admin';
+}
+
+/** 管理员收件邮箱：优先 notify_admin_email，兼容旧的 notify_email_to */
+async function adminEmailRecipient(): Promise<string> {
+  const dedicated = firstRecipient(await getConfigValue('notify_admin_email'));
+  return dedicated || firstRecipient(await getConfigValue('notify_email_to'));
+}
+
+/** 管理员收件手机号：优先 notify_admin_phone，兼容旧的 notify_sms_phone */
+async function adminSmsRecipient(): Promise<string> {
+  const dedicated = firstRecipient(await getConfigValue('notify_admin_phone'));
+  return dedicated || firstRecipient(await getConfigValue('notify_sms_phone'));
+}
+
+async function sendEmailChannel(
+  template: NotificationTemplate,
+  title: string,
+  content: string,
+  vars: NotifyVars,
+  force: boolean
+): Promise<NotifyChannelResult> {
   if (!force && !(await isMailEnabled())) return channelResult('EMAIL', 'skipped', '未启用邮件发件');
-  const to = firstRecipient(await getConfigValue('notify_email_to'));
-  if (!to) return channelResult('EMAIL', 'skipped', '未配置通知邮箱');
+  const admin = isAdminAudience(template);
+  // 测试发送统一投递到管理员邮箱，便于运营验证模板效果
+  let to = admin || force ? await adminEmailRecipient() : firstRecipient(String(vars.email ?? ''));
+  if (!to && force) to = firstRecipient(String(vars.email ?? ''));
+  if (!to) {
+    return channelResult('EMAIL', 'skipped', admin ? '未配置管理员收件邮箱' : '缺少用户邮箱地址');
+  }
   const smtp = await loadSmtpConfig();
   if (!smtp) return channelResult('EMAIL', 'skipped', '未配置 SMTP 服务');
+  const siteName = (await getConfigValue('site_name')).trim() || 'eBox';
   await sendMail(smtp, {
     to,
     subject: title,
     text: content,
-    html: wrapHtml(title, content),
+    html: wrapHtml(title, content, siteName),
     fromName: await getMailFromName(),
   });
   return channelResult('EMAIL', 'ok', `已发送至 ${to}`);
@@ -221,8 +270,12 @@ async function sendSmsChannel(
   if (!force && !(await isSmsEnabled())) return channelResult('SMS', 'skipped', '未启用短信');
   const templateCode = (template.smsTemplateCode || '').trim();
   if (!templateCode) return channelResult('SMS', 'skipped', '模板未配置短信模板 CODE');
-  const phone = firstRecipient(await getConfigValue('notify_sms_phone'));
-  if (!phone) return channelResult('SMS', 'skipped', '未配置通知手机号');
+  const admin = isAdminAudience(template);
+  let phone = admin || force ? await adminSmsRecipient() : firstRecipient(String(smsVars.phone ?? ''));
+  if (!phone && force) phone = firstRecipient(String(smsVars.phone ?? ''));
+  if (!phone) {
+    return channelResult('SMS', 'skipped', admin ? '未配置管理员手机号' : '缺少用户手机号');
+  }
   if (!isValidMainlandPhone(phone)) return channelResult('SMS', 'fail', '通知手机号格式不正确');
   const smsConfig = await loadAliyunSmsConfig();
   if (!smsConfig) return channelResult('SMS', 'skipped', '未配置阿里云 AccessKey');
@@ -249,7 +302,7 @@ async function dispatchChannels(
     try {
       if (channel === 'DINGTALK') results.push(await sendDingtalk(title, content));
       else if (channel === 'WECOM') results.push(await sendWecom(title, content));
-      else if (channel === 'EMAIL') results.push(await sendEmailChannel(title, content, force));
+      else if (channel === 'EMAIL') results.push(await sendEmailChannel(template, title, content, smsVars, force));
       else if (channel === 'SMS') results.push(await sendSmsChannel(template, smsVars, force));
     } catch (e) {
       const message = errorMessage(e);
@@ -311,7 +364,7 @@ export async function sendTemplate(code: string, vars: NotifyVars = {}): Promise
 
     if (template.isEnabled !== 1 || template.autoTrigger !== 1) return [];
     if ((await getConfigValue('notify_global_enabled')) !== '1') return [];
-    return dispatchChannels(template, parseChannels(template.channels), title, content, vars, false);
+    return dispatchChannels(template, parseChannels(template.channels), title, content, finalVars, false);
   } catch (e) {
     log.error(`通知发送失败（${code}）：${errorMessage(e)}`);
     return [];
@@ -331,7 +384,7 @@ export async function sendTemplateToEmail(code: string, to: string, vars: Notify
     to,
     subject: title,
     text: content,
-    html: wrapHtml(title, content),
+    html: wrapHtml(title, content, finalVars.site_name),
     fromName: await getMailFromName(),
   });
 }
@@ -366,7 +419,10 @@ export async function testTemplateChannels(code: string): Promise<NotifyChannelR
   if (!template) throw new Error('模板不存在');
   const sampleVars: NotifyVars = {
     username: '测试用户',
+    login: 'test_user',
+    account: 'test_user',
     email: 'test@example.com',
+    phone: '13800000000',
     code: '123456',
     minutes: 10,
     version: '1.0.0',
@@ -374,6 +430,7 @@ export async function testTemplateChannels(code: string): Promise<NotifyChannelR
     days: 7,
     tier_text: '个人版普通',
     changelog: '测试更新内容',
+    ip: '127.0.0.1',
   };
   const finalVars = await buildVars(sampleVars);
   const title = render(template.title || template.name, finalVars) || template.name;
@@ -389,16 +446,16 @@ export async function scanExpiringLicenseNotifications(withinDays = 7): Promise<
   let sent = 0;
   try {
     const days = Math.max(1, Math.floor(withinDays));
-    const rows: Array<{ login: string; nickname: string | null; expire_at: string | Date }> =
+    const rows: Array<{ login: string; nickname: string | null; email: string | null; expire_at: string | Date }> =
       await AppDataSource.query(
-        `SELECT a.login AS login, a.nickname AS nickname, MAX(k.account_expire_at) AS expire_at
+        `SELECT a.login AS login, a.nickname AS nickname, a.email AS email, MAX(k.account_expire_at) AS expire_at
            FROM accounts a
            JOIN license_keys k ON k.account_id = a.id
           WHERE k.status = 1
             AND k.account_expire_at IS NOT NULL
             AND k.account_expire_at > NOW()
             AND k.account_expire_at <= DATE_ADD(NOW(), INTERVAL ? DAY)
-          GROUP BY a.id, a.login, a.nickname`,
+          GROUP BY a.id, a.login, a.nickname, a.email`,
         [days]
       );
     for (const row of rows) {
@@ -409,10 +466,15 @@ export async function scanExpiringLicenseNotifications(withinDays = 7): Promise<
       if (await wasNotifiedToday('LICENSE_EXPIRING', username, expireText)) continue;
       await sendTemplate('LICENSE_EXPIRING', {
         username,
+        email: row.email || '',
         days: Math.max(1, Math.ceil((expireAt.getTime() - Date.now()) / 86400000)),
         expire_at: expireText,
       });
       sent += 1;
+    }
+    // 管理员侧：临期授权汇总（当天有临期授权才发）
+    if (sent > 0 && !(await wasNotifiedToday('ADMIN_LICENSE_EXPIRING', String(days)))) {
+      await sendTemplate('ADMIN_LICENSE_EXPIRING', { count: sent, days });
     }
   } catch (e) {
     log.error(`临期提醒扫描失败：${errorMessage(e)}`);

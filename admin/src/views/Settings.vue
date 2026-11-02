@@ -369,14 +369,17 @@
                   <el-input v-model="notifyForm.notify_wecom_url" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..." style="width: 480px" />
                 </div>
                 <div class="grid-row">
-                  <span class="grid-label">通知邮箱</span>
-                  <el-input v-model="notifyForm.notify_email_to" placeholder="多个邮箱用逗号分隔，仅发送第一个" style="width: 480px" />
+                  <span class="grid-label">管理员收件邮箱</span>
+                  <el-input v-model="notifyForm.notify_admin_email" placeholder="用于接收「管理员模板」，如用户注册、账号锁定等，多个用逗号分隔" style="width: 480px" />
                 </div>
                 <div class="grid-row">
-                  <span class="grid-label">通知手机号</span>
-                  <el-input v-model="notifyForm.notify_sms_phone" placeholder="多个手机号用逗号分隔，仅发送第一个" style="width: 480px" />
+                  <span class="grid-label">管理员手机号</span>
+                  <el-input v-model="notifyForm.notify_admin_phone" placeholder="用于接收管理员短信模板，多个用逗号分隔" style="width: 480px" />
                 </div>
               </div>
+              <span class="hint" style="display: block; margin-top: 10px; margin-left: 0">
+                用户模板（如找回密码、授权到期）发送到用户自己的邮箱 / 手机号；管理员模板统一发送到上方收件地址。
+              </span>
 
               <div class="form-item" style="margin-top: 20px">
                 <el-button type="primary" :icon="Check" :loading="notifySaving" @click="saveNotifyConfig">保存</el-button>
@@ -387,6 +390,10 @@
             <div class="sub-card">
               <div class="sub-title">消息模板</div>
               <div class="tpl-toolbar">
+                <el-select v-model="tplQuery.audience" placeholder="受众" clearable style="width: 120px" @change="searchTemplates">
+                  <el-option label="给用户" value="user" />
+                  <el-option label="给管理员" value="admin" />
+                </el-select>
                 <el-select v-model="tplQuery.category" placeholder="分类" clearable style="width: 130px" @change="searchTemplates">
                   <el-option label="账号" value="account" />
                   <el-option label="授权" value="license" />
@@ -412,6 +419,13 @@
                 <el-table-column label="名称" min-width="150" prop="name" show-overflow-tooltip />
                 <el-table-column label="分类" width="100">
                   <template #default="{ row }">{{ CATEGORY_LABELS[row.category] || row.category || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="受众" width="96" align="center">
+                  <template #default="{ row }">
+                    <el-tag size="small" :type="row.audience === 'admin' ? 'warning' : 'success'" effect="plain">
+                      {{ row.audience === 'admin' ? '管理员' : '用户' }}
+                    </el-tag>
+                  </template>
                 </el-table-column>
                 <el-table-column label="渠道" min-width="220">
                   <template #default="{ row }">
@@ -517,11 +531,18 @@
               <el-option label="系统" value="system" />
             </el-select>
           </el-form-item>
+          <el-form-item label="受众">
+            <el-radio-group v-model="tplForm.audience">
+              <el-radio-button label="user">给用户</el-radio-button>
+              <el-radio-button label="admin">给管理员</el-radio-button>
+            </el-radio-group>
+            <span class="hint">用户模板取用户邮箱 / 手机号；管理员模板取「通知渠道」里的管理员收件地址</span>
+          </el-form-item>
           <el-form-item label="标题">
             <el-input v-model="tplForm.title" placeholder="站内信 / 邮件 / 钉钉标题" style="width: 420px" />
           </el-form-item>
           <el-form-item label="正文">
-            <el-input v-model="tplForm.content" type="textarea" :rows="6" placeholder="支持占位符：{username} {email} {code} {minutes} {version} {expire_at} {days} {site_name} {time}" />
+            <el-input v-model="tplForm.content" type="textarea" :rows="6" placeholder="支持占位符：{username} {login} {account} {email} {phone} {code} {minutes} {version} {expire_at} {days} {tier_text} {changelog} {site_name} {time} {ip} {count}" />
           </el-form-item>
           <el-form-item label="通知渠道">
             <el-checkbox-group v-model="tplForm.channels">
@@ -924,6 +945,8 @@ const notifyForm = reactive({
   notify_wecom_url: '',
   notify_email_to: '',
   notify_sms_phone: '',
+  notify_admin_email: '',
+  notify_admin_phone: '',
 })
 const notifyGlobalEnabled = ref(false)
 const dingtalkSecretSet = ref(false)
@@ -956,6 +979,9 @@ async function loadNotifyConfig() {
     notifyForm.notify_wecom_url = data.notify_wecom_url || ''
     notifyForm.notify_email_to = data.notify_email_to || ''
     notifyForm.notify_sms_phone = data.notify_sms_phone || ''
+    // 兼容：管理员收件配置为空时沿用旧的「通知邮箱 / 通知手机号」
+    notifyForm.notify_admin_email = data.notify_admin_email || data.notify_email_to || ''
+    notifyForm.notify_admin_phone = data.notify_admin_phone || data.notify_sms_phone || ''
     notifyGlobalEnabled.value = data.notify_global_enabled === '1'
     dingtalkSecretSet.value = data.notify_dingtalk_secret === '__SET__'
   } catch {
@@ -1063,6 +1089,8 @@ async function saveNotifyConfig() {
       notify_wecom_url: notifyForm.notify_wecom_url.trim(),
       notify_email_to: notifyForm.notify_email_to.trim(),
       notify_sms_phone: notifyForm.notify_sms_phone.trim(),
+      notify_admin_email: notifyForm.notify_admin_email.trim(),
+      notify_admin_phone: notifyForm.notify_admin_phone.trim(),
     })
     ElMessage.success('通知渠道已保存')
     await loadNotifyConfig()
@@ -1074,7 +1102,7 @@ async function saveNotifyConfig() {
 }
 
 // ============ 消息模板 ============
-const tplQuery = reactive({ page: 1, pageSize: 20, keyword: '', category: '' })
+const tplQuery = reactive({ page: 1, pageSize: 20, keyword: '', category: '', audience: '' })
 const tplList = ref<NotificationTemplateRow[]>([])
 const tplTotal = ref(0)
 const tplLoading = ref(false)
@@ -1088,6 +1116,7 @@ const tplForm = reactive({
   code: '',
   name: '',
   category: 'account',
+  audience: 'user' as 'user' | 'admin',
   title: '',
   content: '',
   channels: ['SYSTEM'] as string[],
@@ -1112,6 +1141,7 @@ async function loadTemplates() {
       pageSize: tplQuery.pageSize,
       keyword: tplQuery.keyword.trim(),
       category: tplQuery.category,
+      audience: tplQuery.audience,
     })
     tplList.value = res.list
     tplTotal.value = res.total
@@ -1132,6 +1162,7 @@ function resetTplForm() {
   tplForm.code = ''
   tplForm.name = ''
   tplForm.category = 'account'
+  tplForm.audience = 'user'
   tplForm.title = ''
   tplForm.content = ''
   tplForm.channels = ['SYSTEM']
@@ -1149,6 +1180,7 @@ function openTemplateDialog(row?: NotificationTemplateRow) {
     tplForm.code = row.code
     tplForm.name = row.name
     tplForm.category = row.category || ''
+    tplForm.audience = row.audience === 'admin' ? 'admin' : 'user'
     tplForm.title = row.title || ''
     tplForm.content = row.content || ''
     tplForm.channels = channelList(row.channels)
@@ -1196,6 +1228,7 @@ async function saveTemplate() {
     const payload = {
       name: tplForm.name.trim(),
       category: tplForm.category,
+      audience: tplForm.audience,
       title: tplForm.title.trim(),
       content: tplForm.content,
       channels: tplForm.channels,
@@ -1432,25 +1465,35 @@ onMounted(() => {
     flex-wrap: wrap;
     margin-top: 16px;
   }
+}
 
-  .form-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    max-width: 100%;
-  }
+/* 键值表格式表单：标签左对齐固定宽度，输入框左边缘统一
+   放在根作用域，兼容 .sub-card 直挂与 .form-item 内嵌两种 DOM */
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 100%;
 
   .grid-row {
     display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+    max-width: 100%;
+
+    .el-input,
+    .el-select {
+      max-width: 100%;
+      min-width: 0;
+    }
   }
 
   .grid-label {
     width: 128px;
     flex: none;
     font-size: 13px;
+    line-height: 32px;
     color: var(--text-main);
   }
 }

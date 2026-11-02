@@ -1,28 +1,30 @@
 <template>
   <div class="page-container">
-    <div class="toolbar-card">
-      <span class="page-title">席位扩容码</span>
-      <div class="toolbar-right">
-        <el-input
-          v-model="query.keyword"
-          placeholder="码 / 备注"
-          clearable
-          style="width: 200px"
-          :prefix-icon="Search"
-          @keyup.enter="search"
-        />
-        <el-select v-model="query.status" placeholder="状态" clearable style="width: 120px" @change="search">
-          <el-option label="未使用" :value="1" />
-          <el-option label="已使用" :value="2" />
-          <el-option label="已作废" :value="3" />
-        </el-select>
-        <el-button type="primary" :icon="Search" @click="search">查询</el-button>
-        <el-button :icon="Refresh" @click="reset">重置</el-button>
-        <el-button type="primary" :icon="Plus" @click="openGenerate">生成扩容码</el-button>
-      </div>
-    </div>
+    <el-tabs v-model="activeTab">
+      <el-tab-pane label="扩容码" name="codes">
+        <div class="toolbar-card">
+          <span class="page-title">席位扩容码</span>
+          <div class="toolbar-right">
+            <el-input
+              v-model="query.keyword"
+              placeholder="码 / 备注"
+              clearable
+              style="width: 200px"
+              :prefix-icon="Search"
+              @keyup.enter="search"
+            />
+            <el-select v-model="query.status" placeholder="状态" clearable style="width: 120px" @change="search">
+              <el-option label="未使用" :value="1" />
+              <el-option label="已使用" :value="2" />
+              <el-option label="已作废" :value="3" />
+            </el-select>
+            <el-button type="primary" :icon="Search" @click="search">查询</el-button>
+            <el-button :icon="Refresh" @click="reset">重置</el-button>
+            <el-button type="primary" :icon="Plus" @click="openGenerate">生成扩容码</el-button>
+          </div>
+        </div>
 
-    <div class="table-card">
+        <div class="table-card">
       <el-table :data="list" v-loading="loading" stripe>
         <el-table-column label="扩容码" min-width="240">
           <template #default="{ row }">
@@ -133,15 +135,67 @@
         <el-button type="primary" @click="resultVisible = false">完成</el-button>
       </template>
     </el-dialog>
+      </el-tab-pane>
+
+      <el-tab-pane label="客户端下发" name="delivery">
+        <div class="table-card">
+          <div class="delivery-head">
+            <span class="page-title">客户端下发</span>
+          </div>
+          <el-form label-width="120px" style="max-width: 720px">
+            <el-form-item label="扩容码商城链接">
+              <div style="width: 100%">
+                <el-input
+                  v-model="seatAddonMallUrl"
+                  placeholder="https://mall.example.com/seat-addon"
+                  clearable
+                  style="width: 100%"
+                />
+                <div class="text-secondary">
+                  客户端「扩容」弹窗下方「去商城购买」按钮跳转此链接；留空则客户端不显示该按钮
+                </div>
+              </div>
+            </el-form-item>
+          </el-form>
+          <el-button type="primary" :icon="Check" :loading="savingMall" @click="saveMallLink">保存并推送</el-button>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Search, Refresh, Plus, CopyDocument } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, CopyDocument, Check } from '@element-plus/icons-vue'
 import TimeCell from '@/components/TimeCell.vue'
-import { getSeatAddons, createSeatAddons, voidSeatAddon, type SeatAddonRow } from '@/api/mall'
+import {
+  getSeatAddons,
+  createSeatAddons,
+  voidSeatAddon,
+  getUpgradeLinks,
+  saveUpgradeLinks,
+  type SeatAddonRow,
+} from '@/api/mall'
+
+const activeTab = ref('codes')
+const seatAddonMallUrl = ref('')
+const savingMall = ref(false)
+
+async function loadMallLink() {
+  const state = await getUpgradeLinks()
+  seatAddonMallUrl.value = state.seatAddonMallUrl || ''
+}
+
+async function saveMallLink() {
+  savingMall.value = true
+  try {
+    const res = await saveUpgradeLinks({ seatAddonMallUrl: seatAddonMallUrl.value.trim() })
+    ElMessage.success(`已保存并推送（在线客户端 ${res.delivered} 个）`)
+  } finally {
+    savingMall.value = false
+  }
+}
 
 const STATUS: Record<number, { label: string; type: 'info' | 'success' | 'danger' }> = {
   1: { label: '未使用', type: 'info' },
@@ -254,7 +308,10 @@ function copyAll() {
   copyText(generated.value.join('\n'))
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadMallLink()
+})
 </script>
 
 <style scoped lang="scss">
@@ -268,6 +325,9 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.delivery-head {
+  margin-bottom: 12px;
 }
 .result-head {
   display: flex;
