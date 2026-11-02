@@ -191,7 +191,7 @@ const menus: MenuNode[] = [
     children: [
       { title: '激活码管理', path: '/licenses', icon: 'Key' },
       { title: '码批次', path: '/batches', icon: 'Collection' },
-      { title: '席位扩容码', path: '/seat-addons', icon: 'Ticket' },
+      { title: '升级与扩容码', path: '/seat-addons', icon: 'Ticket' },
     ],
   },
   {

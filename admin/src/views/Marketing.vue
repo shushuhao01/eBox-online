@@ -28,7 +28,7 @@
       <el-table v-loading="loading" :data="list" stripe>
         <el-table-column label="标题" min-width="170" show-overflow-tooltip>
           <template #default="{ row }">
-            <span class="campaign-title">{{ row.title }}</span>
+            <el-button link type="primary" class="campaign-title" @click="openView(row)">{{ row.title }}</el-button>
           </template>
         </el-table-column>
         <el-table-column label="邮件主题" min-width="180" show-overflow-tooltip>
@@ -546,7 +546,7 @@ onMounted(() => {
 
 .campaign-title {
   font-weight: 500;
-  color: var(--text-main);
+  padding: 0;
 }
 
 .count-ok {

@@ -1,6 +1,159 @@
 <template>
   <div class="page-container">
     <el-tabs v-model="activeTab">
+      <!-- ==================== 升级码 ==================== -->
+      <el-tab-pane label="升级码" name="upgrade">
+        <div class="toolbar-card">
+          <span class="page-title">升级码</span>
+          <div class="toolbar-right">
+            <el-input
+              v-model="upgradeQuery.keyword"
+              placeholder="码 / 备注"
+              clearable
+              style="width: 200px"
+              :prefix-icon="Search"
+              @keyup.enter="searchUpgradeCodes"
+            />
+            <el-select
+              v-model="upgradeQuery.status"
+              placeholder="状态"
+              clearable
+              style="width: 120px"
+              @change="searchUpgradeCodes"
+            >
+              <el-option label="未使用" :value="1" />
+              <el-option label="已使用" :value="2" />
+              <el-option label="已作废" :value="3" />
+            </el-select>
+            <el-button type="primary" :icon="Search" @click="searchUpgradeCodes">查询</el-button>
+            <el-button :icon="Refresh" @click="resetUpgradeCodes">重置</el-button>
+            <el-button type="primary" :icon="Plus" @click="openUpgradeGenerate">生成升级码</el-button>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <el-table :data="upgradeList" v-loading="upgradeLoading" stripe>
+            <el-table-column label="升级码" min-width="240">
+              <template #default="{ row }">
+                <div class="code-cell">
+                  <span class="code-font">{{ row.code }}</span>
+                  <el-button link type="primary" :icon="CopyDocument" size="small" @click="copyText(row.code)" />
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="升级到" min-width="180">
+              <template #default="{ row }">
+                <div class="tier-cell">
+                  <span>{{ row.toSkuLabel || '-' }}</span>
+                  <span v-if="row.toSkuCode" class="code-font text-secondary">{{ row.toSkuCode }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="STATUS[row.status]?.type || 'info'">{{ STATUS[row.status]?.label || row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="有效期至" width="160">
+              <template #default="{ row }"><TimeCell :value="row.validUntil" /></template>
+            </el-table-column>
+            <el-table-column label="核销时间" width="160">
+              <template #default="{ row }"><TimeCell :value="row.usedAt" /></template>
+            </el-table-column>
+            <el-table-column label="核销账号" width="110" align="center">
+              <template #default="{ row }">{{ row.usedBy || row.accountId || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="备注" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.remark || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="创建时间" width="160">
+              <template #default="{ row }"><TimeCell :value="row.createdAt" /></template>
+            </el-table-column>
+            <el-table-column label="操作" width="90" fixed="right" align="center">
+              <template #default="{ row }">
+                <el-button v-if="row.status === 1" link type="danger" size="small" @click="handleVoidUpgrade(row)">作废</el-button>
+                <span v-else class="text-secondary">-</span>
+              </template>
+            </el-table-column>
+            <template #empty><el-empty description="暂无升级码" :image-size="80" /></template>
+          </el-table>
+
+          <div class="pager">
+            <el-pagination
+              v-model:current-page="upgradeQuery.page"
+              v-model:page-size="upgradeQuery.pageSize"
+              :total="upgradeTotal"
+              :page-sizes="[20, 50, 100]"
+              layout="total, sizes, prev, pager, next, jumper"
+              @current-change="loadUpgradeCodes"
+              @size-change="searchUpgradeCodes"
+            />
+          </div>
+        </div>
+
+        <!-- 生成升级码 -->
+        <el-dialog v-model="upgradeGenVisible" title="生成升级码" width="580px" :close-on-click-modal="false">
+          <el-form ref="upgradeGenFormRef" :model="upgradeGenForm" :rules="upgradeGenRules" label-width="110px">
+            <el-form-item label="升级到" prop="toSkuId">
+              <el-select v-model="upgradeGenForm.toSkuId" filterable placeholder="选择目标档位" style="width: 100%">
+                <el-option v-for="s in skuOptions" :key="s.id" :label="skuText(s)" :value="s.id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="当前档位">
+              <el-select
+                v-model="upgradeGenForm.fromSkuId"
+                filterable
+                clearable
+                placeholder="可选：限定从某档位升级"
+                style="width: 100%"
+              >
+                <el-option v-for="s in skuOptions" :key="s.id" :label="skuText(s)" :value="s.id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="指定账号ID">
+              <el-input v-model="upgradeGenForm.accountId" placeholder="留空表示不限账号（可选）" style="width: 260px" />
+            </el-form-item>
+            <el-form-item label="生成数量" prop="count">
+              <el-input-number v-model="upgradeGenForm.count" :min="1" :max="200" />
+            </el-form-item>
+            <el-form-item label="有效期至">
+              <el-date-picker
+                v-model="upgradeGenForm.validUntil"
+                type="datetime"
+                placeholder="留空表示长期有效"
+                value-format="YYYY-MM-DDTHH:mm:ssZ"
+                style="width: 260px"
+              />
+            </el-form-item>
+            <el-form-item label="备注">
+              <el-input v-model="upgradeGenForm.remark" placeholder="备注（可选）" maxlength="255" style="width: 320px" />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="upgradeGenVisible = false">取消</el-button>
+            <el-button type="primary" :loading="upgradeGenerating" @click="submitUpgradeGenerate">生成</el-button>
+          </template>
+        </el-dialog>
+
+        <!-- 升级码生成结果 -->
+        <el-dialog v-model="upgradeResultVisible" title="升级码生成结果" width="560px">
+          <div class="result-head">
+            <span>共 {{ upgradeGenerated.length }} 个</span>
+            <el-button link type="primary" :icon="CopyDocument" @click="copyAllUpgrade">全部复制</el-button>
+          </div>
+          <el-scrollbar max-height="300px">
+            <div v-for="(c, i) in upgradeGenerated" :key="i" class="code-line">
+              <span class="code-font">{{ c }}</span>
+              <el-button link type="primary" :icon="CopyDocument" size="small" @click="copyText(c)" />
+            </div>
+          </el-scrollbar>
+          <template #footer>
+            <el-button type="primary" @click="upgradeResultVisible = false">完成</el-button>
+          </template>
+        </el-dialog>
+      </el-tab-pane>
+
+      <!-- ==================== 扩容码 ==================== -->
       <el-tab-pane label="扩容码" name="codes">
         <div class="toolbar-card">
           <span class="page-title">席位扩容码</span>
@@ -25,124 +178,134 @@
         </div>
 
         <div class="table-card">
-      <el-table :data="list" v-loading="loading" stripe>
-        <el-table-column label="扩容码" min-width="240">
-          <template #default="{ row }">
-            <div class="code-cell">
-              <span class="code-font">{{ row.code }}</span>
-              <el-button link type="primary" :icon="CopyDocument" size="small" @click="copyText(row.code)" />
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="增加席位" width="100" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" type="success" effect="plain">+{{ row.seatDelta }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="限定企业" width="110" align="center">
-          <template #default="{ row }">
-            <span v-if="row.enterpriseId">#{{ row.enterpriseId }}</span>
-            <span v-else class="text-secondary">不限</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" :type="STATUS[row.status]?.type || 'info'">{{ STATUS[row.status]?.label || row.status }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="有效期至" width="160">
-          <template #default="{ row }"><TimeCell :value="row.validUntil" /></template>
-        </el-table-column>
-        <el-table-column label="核销时间" width="160">
-          <template #default="{ row }"><TimeCell :value="row.usedAt" /></template>
-        </el-table-column>
-        <el-table-column label="核销账号" width="110" align="center">
-          <template #default="{ row }">{{ row.usedBy || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="备注" min-width="140" prop="remark" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.remark || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="创建时间" width="160">
-          <template #default="{ row }"><TimeCell :value="row.createdAt" /></template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right" align="center">
-          <template #default="{ row }">
-            <el-button v-if="row.status === 1" link type="danger" size="small" @click="handleVoid(row)">作废</el-button>
-            <span v-else class="text-secondary">-</span>
-          </template>
-        </el-table-column>
-        <template #empty><el-empty description="暂无席位扩容码" :image-size="80" /></template>
-      </el-table>
+          <el-table :data="list" v-loading="loading" stripe>
+            <el-table-column label="扩容码" min-width="240">
+              <template #default="{ row }">
+                <div class="code-cell">
+                  <span class="code-font">{{ row.code }}</span>
+                  <el-button link type="primary" :icon="CopyDocument" size="small" @click="copyText(row.code)" />
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="增加席位" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" type="success" effect="plain">+{{ row.seatDelta }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="限定企业" width="110" align="center">
+              <template #default="{ row }">
+                <span v-if="row.enterpriseId">#{{ row.enterpriseId }}</span>
+                <span v-else class="text-secondary">不限</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="STATUS[row.status]?.type || 'info'">{{ STATUS[row.status]?.label || row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="有效期至" width="160">
+              <template #default="{ row }"><TimeCell :value="row.validUntil" /></template>
+            </el-table-column>
+            <el-table-column label="核销时间" width="160">
+              <template #default="{ row }"><TimeCell :value="row.usedAt" /></template>
+            </el-table-column>
+            <el-table-column label="核销账号" width="110" align="center">
+              <template #default="{ row }">{{ row.usedBy || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="备注" min-width="140" prop="remark" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.remark || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="创建时间" width="160">
+              <template #default="{ row }"><TimeCell :value="row.createdAt" /></template>
+            </el-table-column>
+            <el-table-column label="操作" width="90" fixed="right" align="center">
+              <template #default="{ row }">
+                <el-button v-if="row.status === 1" link type="danger" size="small" @click="handleVoid(row)">作废</el-button>
+                <span v-else class="text-secondary">-</span>
+              </template>
+            </el-table-column>
+            <template #empty><el-empty description="暂无席位扩容码" :image-size="80" /></template>
+          </el-table>
 
-      <div class="pager">
-        <el-pagination
-          v-model:current-page="query.page"
-          v-model:page-size="query.pageSize"
-          :total="total"
-          :page-sizes="[20, 50, 100]"
-          layout="total, sizes, prev, pager, next, jumper"
-          @current-change="load"
-          @size-change="search"
-        />
-      </div>
-    </div>
-
-    <!-- 生成 -->
-    <el-dialog v-model="genVisible" title="生成席位扩容码" width="560px" :close-on-click-modal="false">
-      <el-form ref="genFormRef" :model="genForm" :rules="genRules" label-width="100px">
-        <el-form-item label="增加席位" prop="seatDelta">
-          <el-input-number v-model="genForm.seatDelta" :min="1" :max="500" />
-          <span class="text-secondary" style="margin-left: 8px">（1 ~ 500，核销后企业席位立即增加）</span>
-        </el-form-item>
-        <el-form-item label="生成数量" prop="count">
-          <el-input-number v-model="genForm.count" :min="1" :max="200" />
-        </el-form-item>
-        <el-form-item label="限定企业ID">
-          <el-input v-model="genForm.enterpriseId" placeholder="留空表示不限企业（可选）" style="width: 260px" />
-        </el-form-item>
-        <el-form-item label="有效期至">
-          <el-date-picker
-            v-model="genForm.validUntil"
-            type="datetime"
-            placeholder="留空表示长期有效"
-            value-format="YYYY-MM-DDTHH:mm:ssZ"
-            style="width: 260px"
-          />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="genForm.remark" placeholder="备注（可选）" maxlength="255" style="width: 320px" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="genVisible = false">取消</el-button>
-        <el-button type="primary" :loading="generating" @click="submitGenerate">生成</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 生成结果 -->
-    <el-dialog v-model="resultVisible" title="扩容码生成结果" width="560px">
-      <div class="result-head">
-        <span>共 {{ generated.length }} 个</span>
-        <el-button link type="primary" :icon="CopyDocument" @click="copyAll">全部复制</el-button>
-      </div>
-      <el-scrollbar max-height="300px">
-        <div v-for="(c, i) in generated" :key="i" class="code-line">
-          <span class="code-font">{{ c }}</span>
-          <el-button link type="primary" :icon="CopyDocument" size="small" @click="copyText(c)" />
+          <div class="pager">
+            <el-pagination
+              v-model:current-page="query.page"
+              v-model:page-size="query.pageSize"
+              :total="total"
+              :page-sizes="[20, 50, 100]"
+              layout="total, sizes, prev, pager, next, jumper"
+              @current-change="load"
+              @size-change="search"
+            />
+          </div>
         </div>
-      </el-scrollbar>
-      <template #footer>
-        <el-button type="primary" @click="resultVisible = false">完成</el-button>
-      </template>
-    </el-dialog>
+
+        <!-- 生成 -->
+        <el-dialog v-model="genVisible" title="生成席位扩容码" width="560px" :close-on-click-modal="false">
+          <el-form ref="genFormRef" :model="genForm" :rules="genRules" label-width="100px">
+            <el-form-item label="增加席位" prop="seatDelta">
+              <el-input-number v-model="genForm.seatDelta" :min="1" :max="500" />
+              <span class="text-secondary" style="margin-left: 8px">（1 ~ 500，核销后企业席位立即增加）</span>
+            </el-form-item>
+            <el-form-item label="生成数量" prop="count">
+              <el-input-number v-model="genForm.count" :min="1" :max="200" />
+            </el-form-item>
+            <el-form-item label="限定企业ID">
+              <el-input v-model="genForm.enterpriseId" placeholder="留空表示不限企业（可选）" style="width: 260px" />
+            </el-form-item>
+            <el-form-item label="有效期至">
+              <el-date-picker
+                v-model="genForm.validUntil"
+                type="datetime"
+                placeholder="留空表示长期有效"
+                value-format="YYYY-MM-DDTHH:mm:ssZ"
+                style="width: 260px"
+              />
+            </el-form-item>
+            <el-form-item label="备注">
+              <el-input v-model="genForm.remark" placeholder="备注（可选）" maxlength="255" style="width: 320px" />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="genVisible = false">取消</el-button>
+            <el-button type="primary" :loading="generating" @click="submitGenerate">生成</el-button>
+          </template>
+        </el-dialog>
+
+        <!-- 生成结果 -->
+        <el-dialog v-model="resultVisible" title="扩容码生成结果" width="560px">
+          <div class="result-head">
+            <span>共 {{ generated.length }} 个</span>
+            <el-button link type="primary" :icon="CopyDocument" @click="copyAll">全部复制</el-button>
+          </div>
+          <el-scrollbar max-height="300px">
+            <div v-for="(c, i) in generated" :key="i" class="code-line">
+              <span class="code-font">{{ c }}</span>
+              <el-button link type="primary" :icon="CopyDocument" size="small" @click="copyText(c)" />
+            </div>
+          </el-scrollbar>
+          <template #footer>
+            <el-button type="primary" @click="resultVisible = false">完成</el-button>
+          </template>
+        </el-dialog>
       </el-tab-pane>
 
+      <!-- ==================== 客户端下发 ==================== -->
       <el-tab-pane label="客户端下发" name="delivery">
         <div class="table-card">
           <div class="delivery-head">
             <span class="page-title">客户端下发</span>
+            <span class="text-secondary">保存后立即推送到在线客户端，无需重启</span>
           </div>
-          <el-form label-width="120px" style="max-width: 720px">
+          <el-form label-width="150px" style="max-width: 760px">
+            <el-form-item v-for="g in UPGRADE_GROUPS" :key="g.key" :label="g.label">
+              <el-input
+                v-model="upgradeUrls[g.key]"
+                placeholder="https://mall.example.com/upgrade"
+                clearable
+                style="max-width: 480px"
+              />
+            </el-form-item>
             <el-form-item label="扩容码商城链接">
               <div style="width: 100%">
                 <el-input
@@ -157,6 +320,9 @@
               </div>
             </el-form-item>
           </el-form>
+          <div class="text-secondary" style="margin-bottom: 12px">
+            4 个档位分别对应客户端升级弹窗「升级码」入口的商品详情页；同一档位不同时长共用此链接，留空则该档位不跳转。
+          </div>
           <el-button type="primary" :icon="Check" :loading="savingMall" @click="saveMallLink">保存并推送</el-button>
         </div>
       </el-tab-pane>
@@ -165,7 +331,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Search, Refresh, Plus, CopyDocument, Check } from '@element-plus/icons-vue'
 import TimeCell from '@/components/TimeCell.vue'
@@ -173,29 +339,18 @@ import {
   getSeatAddons,
   createSeatAddons,
   voidSeatAddon,
+  getSkus,
+  getUpgradeCodes,
+  createUpgradeCodes,
+  voidUpgradeCode,
   getUpgradeLinks,
   saveUpgradeLinks,
   type SeatAddonRow,
+  type SkuItem,
+  type UpgradeCodeRow,
 } from '@/api/mall'
 
-const activeTab = ref('codes')
-const seatAddonMallUrl = ref('')
-const savingMall = ref(false)
-
-async function loadMallLink() {
-  const state = await getUpgradeLinks()
-  seatAddonMallUrl.value = state.seatAddonMallUrl || ''
-}
-
-async function saveMallLink() {
-  savingMall.value = true
-  try {
-    const res = await saveUpgradeLinks({ seatAddonMallUrl: seatAddonMallUrl.value.trim() })
-    ElMessage.success(`已保存并推送（在线客户端 ${res.delivered} 个）`)
-  } finally {
-    savingMall.value = false
-  }
-}
+const activeTab = ref('upgrade')
 
 const STATUS: Record<number, { label: string; type: 'info' | 'success' | 'danger' }> = {
   1: { label: '未使用', type: 'info' },
@@ -203,6 +358,179 @@ const STATUS: Record<number, { label: string; type: 'info' | 'success' | 'danger
   3: { label: '已作废', type: 'danger' },
 }
 
+const DURATION_TEXT: Record<string, string> = { month: '月卡', quarter: '季卡', year: '年卡', permanent: '永久' }
+
+// ==================== 客户端下发（商城链接） ====================
+/** 升级链接按 (version, level) 分 4 组，同组内不同时长共用链接 */
+const UPGRADE_GROUPS: Array<{ key: string; label: string; version: number; level: number }> = [
+  { key: 'v1l1', label: '个人普通版（v1l1）', version: 1, level: 1 },
+  { key: 'v1l2', label: '个人高级版（v1l2）', version: 1, level: 2 },
+  { key: 'v2l1', label: '企业普通版（v2l1）', version: 2, level: 1 },
+  { key: 'v2l2', label: '企业高级版（v2l2）', version: 2, level: 2 },
+]
+
+const upgradeUrls = reactive<Record<string, string>>({ v1l1: '', v1l2: '', v2l1: '', v2l2: '' })
+const seatAddonMallUrl = ref('')
+const savingMall = ref(false)
+const skus = ref<SkuItem[]>([])
+
+const skuOptions = computed(() => {
+  const order = ['month', 'quarter', 'year', 'permanent']
+  return skus.value
+    .filter((s) => s.enabled)
+    .slice()
+    .sort(
+      (a, b) =>
+        a.version - b.version ||
+        a.level - b.level ||
+        order.indexOf(a.duration) - order.indexOf(b.duration)
+    )
+})
+
+function skuText(s: SkuItem) {
+  return `${s.version === 2 ? '企业' : '个人'}${s.level === 2 ? '高级' : '普通'} · ${
+    DURATION_TEXT[s.duration] || s.duration
+  }（${s.code}）`
+}
+
+/** 把每组链接展开写入该组全部 SKU code */
+function buildUpgradeLinks(): Record<string, string> {
+  const links: Record<string, string> = {}
+  for (const g of UPGRADE_GROUPS) {
+    const url = (upgradeUrls[g.key] || '').trim()
+    if (!url) continue
+    for (const s of skus.value) {
+      if (s.version === g.version && s.level === g.level) links[s.code] = url
+    }
+  }
+  return links
+}
+
+async function loadMallLink() {
+  const [state, rows] = await Promise.all([getUpgradeLinks(), getSkus()])
+  skus.value = rows
+  seatAddonMallUrl.value = state.seatAddonMallUrl || ''
+  for (const g of UPGRADE_GROUPS) {
+    const hit = rows.find(
+      (s) => s.version === g.version && s.level === g.level && !!state.links[s.code]
+    )
+    upgradeUrls[g.key] = hit ? state.links[hit.code] : ''
+  }
+}
+
+async function saveMallLink() {
+  savingMall.value = true
+  try {
+    const res = await saveUpgradeLinks({
+      links: buildUpgradeLinks(),
+      seatAddonMallUrl: seatAddonMallUrl.value.trim(),
+    })
+    ElMessage.success(`已保存并推送（在线客户端 ${res.delivered} 个）`)
+  } finally {
+    savingMall.value = false
+  }
+}
+
+// ==================== 升级码 ====================
+const upgradeQuery = reactive({ page: 1, pageSize: 20, keyword: '', status: '' as number | '' })
+const upgradeList = ref<UpgradeCodeRow[]>([])
+const upgradeTotal = ref(0)
+const upgradeLoading = ref(false)
+
+async function loadUpgradeCodes() {
+  upgradeLoading.value = true
+  try {
+    const res = await getUpgradeCodes(upgradeQuery)
+    upgradeList.value = res.list
+    upgradeTotal.value = res.total
+  } finally {
+    upgradeLoading.value = false
+  }
+}
+
+function searchUpgradeCodes() {
+  upgradeQuery.page = 1
+  loadUpgradeCodes()
+}
+
+function resetUpgradeCodes() {
+  upgradeQuery.keyword = ''
+  upgradeQuery.status = ''
+  searchUpgradeCodes()
+}
+
+const upgradeGenVisible = ref(false)
+const upgradeGenerating = ref(false)
+const upgradeGenFormRef = ref<FormInstance>()
+const upgradeGenForm = reactive({
+  toSkuId: '',
+  fromSkuId: '',
+  accountId: '',
+  count: 1,
+  validUntil: '' as string,
+  remark: '',
+})
+const upgradeGenRules: FormRules = {
+  toSkuId: [{ required: true, message: '请选择升级目标档位', trigger: 'change' }],
+  count: [{ required: true, message: '请设置生成数量', trigger: 'change' }],
+}
+
+function openUpgradeGenerate() {
+  upgradeGenForm.toSkuId = ''
+  upgradeGenForm.fromSkuId = ''
+  upgradeGenForm.accountId = ''
+  upgradeGenForm.count = 1
+  upgradeGenForm.validUntil = ''
+  upgradeGenForm.remark = ''
+  upgradeGenVisible.value = true
+}
+
+const upgradeResultVisible = ref(false)
+const upgradeGenerated = ref<string[]>([])
+
+async function submitUpgradeGenerate() {
+  if (!upgradeGenFormRef.value) return
+  const valid = await upgradeGenFormRef.value.validate().catch(() => false)
+  if (!valid) return
+  upgradeGenerating.value = true
+  try {
+    const rows = await createUpgradeCodes({
+      toSkuId: upgradeGenForm.toSkuId,
+      fromSkuId: upgradeGenForm.fromSkuId || null,
+      accountId: upgradeGenForm.accountId.trim() || null,
+      count: upgradeGenForm.count,
+      validUntil: upgradeGenForm.validUntil || null,
+      remark: upgradeGenForm.remark || undefined,
+    })
+    upgradeGenerated.value = rows.map((r) => r.code)
+    upgradeGenVisible.value = false
+    upgradeResultVisible.value = true
+    searchUpgradeCodes()
+  } finally {
+    upgradeGenerating.value = false
+  }
+}
+
+async function handleVoidUpgrade(row: UpgradeCodeRow) {
+  try {
+    await ElMessageBox.confirm(`确定作废升级码「${row.code}」吗？`, '作废确认', {
+      type: 'warning',
+      confirmButtonText: '确认作废',
+      cancelButtonText: '取消',
+    })
+    await voidUpgradeCode(row.id)
+    ElMessage.success('已作废')
+    loadUpgradeCodes()
+  } catch {
+    // 取消或已提示
+  }
+}
+
+function copyAllUpgrade() {
+  copyText(upgradeGenerated.value.join('\n'))
+}
+
+// ==================== 扩容码 ====================
 const query = reactive({ page: 1, pageSize: 20, keyword: '', status: '' as number | '' })
 const list = ref<SeatAddonRow[]>([])
 const total = ref(0)
@@ -230,7 +558,6 @@ function reset() {
   search()
 }
 
-// ============ 生成 ============
 const genVisible = ref(false)
 const generating = ref(false)
 const genFormRef = ref<FormInstance>()
@@ -309,6 +636,7 @@ function copyAll() {
 }
 
 onMounted(() => {
+  loadUpgradeCodes()
   load()
   loadMallLink()
 })
@@ -326,8 +654,16 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
 }
+.tier-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .delivery-head {
-  margin-bottom: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 .result-head {
   display: flex;

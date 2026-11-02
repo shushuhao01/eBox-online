@@ -21,6 +21,7 @@ import {
   listSeatAddons,
   voidSeatAddon,
 } from '../../services/VoucherService';
+import { broadcastConfig } from '../../services/AccountEventService';
 
 const router = Router();
 
@@ -139,6 +140,20 @@ router.put('/upgrade-links', async (req, res) => {
     if (sendError(res, e)) return;
     throw e;
   }
+});
+
+// POST /api/admin/push-config（仅重新广播当前客户端配置，不修改链接）
+router.post('/push-config', async (req, res) => {
+  const config = await buildClientConfig();
+  const delivered = broadcastConfig({ ...config, serverTime: Math.floor(Date.now() / 1000) });
+  await writeOperationLog(
+    req.auth!.userId,
+    '重推客户端配置',
+    '套餐与档位',
+    `delivered=${delivered}`,
+    clientIp(req)
+  );
+  ok(res, { delivered });
 });
 
 // ==================== 升级码 ====================

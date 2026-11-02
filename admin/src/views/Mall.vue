@@ -3,7 +3,7 @@
     <div class="toolbar-card">
       <span class="page-title">套餐与档位</span>
       <div class="toolbar-right">
-        <span class="hint">续费/升级链接保存后立即推送在线客户端</span>
+        <span class="hint">续费链接保存后立即推送在线客户端；升级码与商城链接请前往「升级与扩容码」</span>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
         <el-button :icon="Promotion" :loading="pushing" @click="handleRepush">重推配置</el-button>
         <el-button type="primary" :icon="Check" :loading="saving" @click="handleSave">保存并推送</el-button>
@@ -12,41 +12,32 @@
 
     <div class="table-card">
       <div class="card-head">
-        <span class="card-title">升级码商城链接（4 个档位）</span>
-        <span class="hint">同一档位不同时长共用此链接；留空则该档位不显示去购买</span>
+        <el-input
+          v-model="keyword"
+          placeholder="搜索编码 / 名称"
+          clearable
+          style="width: 200px"
+          :prefix-icon="Search"
+        />
+        <el-select v-model="tierFilter" placeholder="全部档位" clearable style="width: 150px">
+          <el-option v-for="t in TIER_FILTERS" :key="t.value" :label="t.label" :value="t.value" />
+        </el-select>
+        <span class="hint">共 {{ filtered.length }} / {{ list.length }} 个档位；停用的档位不会下发给客户端</span>
       </div>
-      <el-form label-width="150px" class="upgrade-form">
-        <el-form-item v-for="g in UPGRADE_GROUPS" :key="g.key" :label="g.label">
-          <el-input
-            v-model="upgradeUrls[g.key]"
-            placeholder="https://mall.example.com/upgrade"
-            clearable
-            style="max-width: 480px"
-          />
-        </el-form-item>
-      </el-form>
-    </div>
-
-    <div class="table-card">
-      <el-table :data="list" v-loading="loading" stripe>
+      <el-table :data="filtered" v-loading="loading" stripe>
         <el-table-column label="编码" width="150">
-          <template #default="{ row }"><span class="code-font">{{ row.code }}</span></template>
-        </el-table-column>
-        <el-table-column label="套餐名称" min-width="150" prop="label" show-overflow-tooltip />
-        <el-table-column label="版本" width="90" align="center">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.version === 2 ? 'warning' : ''" effect="plain">
-              {{ row.version === 2 ? '企业' : '个人' }}
+            <span class="code-font">{{ row.code }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="档位" width="120" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.version === 2 ? 'warning' : 'info'" effect="plain">
+              {{ tierText(row) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="级别" width="90" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.level === 2 ? 'success' : 'info'" effect="plain">
-              {{ row.level === 2 ? '高级' : '普通' }}
-            </el-tag>
-          </template>
-        </el-table-column>
+        <el-table-column label="套餐名称" min-width="160" prop="label" show-overflow-tooltip />
         <el-table-column label="时长" width="100" align="center">
           <template #default="{ row }">{{ DURATION_TEXT[row.duration] || row.duration }}</template>
         </el-table-column>
@@ -72,62 +63,58 @@
         </el-table-column>
         <template #empty><el-empty description="暂无套餐" :image-size="80" /></template>
       </el-table>
-      <div class="foot-hint">共 {{ list.length }} 个档位；停用的档位不会下发给客户端。</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Refresh, Check, Promotion } from '@element-plus/icons-vue'
-import { getSkus, updateSku, toggleSku, getUpgradeLinks, saveUpgradeLinks, type SkuItem } from '@/api/mall'
+import { Refresh, Check, Promotion, Search } from '@element-plus/icons-vue'
+import { getSkus, updateSku, toggleSku, pushClientConfig, type SkuItem } from '@/api/mall'
 
 type Row = SkuItem & { _originalUrl: string; _toggling?: boolean }
 
 const DURATION_TEXT: Record<string, string> = { month: '月', quarter: '季', year: '年', permanent: '永久' }
-
-/** 升级链接按 (version, level) 分 4 组，同组内不同时长共用链接 */
-const UPGRADE_GROUPS: Array<{ key: string; label: string; version: number; level: number }> = [
-  { key: 'v1l1', label: '个人普通版（v1l1）', version: 1, level: 1 },
-  { key: 'v1l2', label: '个人高级版（v1l2）', version: 1, level: 2 },
-  { key: 'v2l1', label: '企业普通版（v2l1）', version: 2, level: 1 },
-  { key: 'v2l2', label: '企业高级版（v2l2）', version: 2, level: 2 },
+const TIER_FILTERS: Array<{ label: string; value: string }> = [
+  { label: '个人普通版', value: 'v1l1' },
+  { label: '个人高级版', value: 'v1l2' },
+  { label: '企业普通版', value: 'v2l1' },
+  { label: '企业高级版', value: 'v2l2' },
 ]
 
 const list = ref<Row[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const pushing = ref(false)
-const upgradeUrls = reactive<Record<string, string>>({ v1l1: '', v1l2: '', v2l1: '', v2l2: '' })
+const keyword = ref('')
+const tierFilter = ref('')
+
+function tierKey(row: SkuItem): string {
+  return `v${row.version}l${row.level}`
+}
+
+function tierText(row: SkuItem): string {
+  return `${row.version === 2 ? '企业' : '个人'}${row.level === 2 ? '高级' : '普通'}`
+}
+
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return list.value.filter((r) => {
+    if (tierFilter.value && tierKey(r) !== tierFilter.value) return false
+    if (!kw) return true
+    return r.code.toLowerCase().includes(kw) || (r.label || '').toLowerCase().includes(kw)
+  })
+})
 
 async function load() {
   loading.value = true
   try {
-    const [rows, state] = await Promise.all([getSkus(), getUpgradeLinks()])
+    const rows = await getSkus()
     list.value = rows.map((r) => ({ ...r, mallUrl: r.mallUrl || '', _originalUrl: r.mallUrl || '' }))
-    for (const g of UPGRADE_GROUPS) {
-      const hit = list.value.find(
-        (r) => r.version === g.version && r.level === g.level && !!state.links[r.code]
-      )
-      upgradeUrls[g.key] = hit ? state.links[hit.code] : ''
-    }
   } finally {
     loading.value = false
   }
-}
-
-/** 把每组链接展开写入该组全部 SKU code */
-function buildUpgradeLinks(): Record<string, string> {
-  const links: Record<string, string> = {}
-  for (const g of UPGRADE_GROUPS) {
-    const url = (upgradeUrls[g.key] || '').trim()
-    if (!url) continue
-    for (const r of list.value) {
-      if (r.version === g.version && r.level === g.level) links[r.code] = url
-    }
-  }
-  return links
 }
 
 /** 保存续费链接（SKU.mallUrl），返回变更条数 */
@@ -150,12 +137,12 @@ async function persistRenewalLinks(): Promise<number> {
   return changed.length
 }
 
-/** 保存：续费链接写 SKU，升级链接写 app_configs，推送配置（SSE） */
+/** 保存续费链接并推送配置（SSE） */
 async function handleSave() {
   saving.value = true
   try {
     const changed = await persistRenewalLinks()
-    const res = await saveUpgradeLinks({ links: buildUpgradeLinks() })
+    const res = await pushConfig()
     ElMessage.success(`已保存 ${changed} 项，配置已推送（在线客户端 ${res.delivered} 个）`)
     await load()
   } finally {
@@ -163,16 +150,21 @@ async function handleSave() {
   }
 }
 
-/** 重推：提交当前续费与升级链接，并重新广播配置 */
+/** 重推：提交当前续费链接，并重新广播配置 */
 async function handleRepush() {
   pushing.value = true
   try {
     await persistRenewalLinks()
-    const res = await saveUpgradeLinks({ links: buildUpgradeLinks() })
+    const res = await pushConfig()
     ElMessage.success(`配置已重推（在线客户端 ${res.delivered} 个）`)
   } finally {
     pushing.value = false
   }
+}
+
+/** 触发服务端重新构建并广播客户端配置 */
+async function pushConfig() {
+  return pushClientConfig()
 }
 
 async function handleToggle(row: Row, enabled: boolean) {
@@ -206,16 +198,5 @@ onMounted(load)
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
-}
-.card-title {
-  font-weight: 600;
-}
-.upgrade-form :deep(.el-form-item) {
-  margin-bottom: 12px;
-}
-.foot-hint {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 </style>

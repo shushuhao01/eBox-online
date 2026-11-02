@@ -87,6 +87,11 @@ export function saveUpgradeLinks(data: { links?: Record<string, string>; seatAdd
   return put<UpgradeLinksState['config'] & { delivered: number }>('/upgrade-links', data)
 }
 
+/** 仅重新广播当前客户端配置（不修改任何链接） */
+export function pushClientConfig() {
+  return post<{ delivered: number }>('/push-config')
+}
+
 // ==================== 升级码 ====================
 
 export function getUpgradeCodes(params: {
