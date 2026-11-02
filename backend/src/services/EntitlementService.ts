@@ -3,7 +3,7 @@ import { Account } from '../entities/account/Account';
 import { Enterprise } from '../entities/account/Enterprise';
 import { EnterpriseMember } from '../entities/account/EnterpriseMember';
 import { LicenseKey } from '../entities/LicenseKey';
-import { Sku } from '../entities/account/Sku';
+import { resolveMaxEnvs } from './TierEnvService';
 
 /**
  * 统一权益计算（唯一出口）
@@ -42,7 +42,6 @@ export interface Entitlements {
 const keyRepo = () => AppDataSource.getRepository(LicenseKey);
 const enterpriseRepo = () => AppDataSource.getRepository(Enterprise);
 const memberRepo = () => AppDataSource.getRepository(EnterpriseMember);
-const skuRepo = () => AppDataSource.getRepository(Sku);
 
 const NONE_CAPS: EntitlementCaps = {
   maxEnvs: 0,
@@ -125,11 +124,17 @@ export async function findEnterpriseKey(account: Account): Promise<LicenseKey | 
     .getOne();
 }
 
-function capsFor(version: 1 | 2, level: 1 | 2, role: 'user' | 'admin' | 'member'): EntitlementCaps {
+/** 功能开关由版本/级别决定；环境数量由卡密携带或系统档位配置决定（0=不限制） */
+function capsFor(
+  version: 1 | 2,
+  level: 1 | 2,
+  role: 'user' | 'admin' | 'member',
+  maxEnvs: number
+): EntitlementCaps {
   const pro = level === 2;
   if (version === 1) {
     return {
-      maxEnvs: pro ? 20 : 5,
+      maxEnvs,
       proxy: pro,
       importExport: pro,
       cloudBackup: pro,
@@ -138,7 +143,7 @@ function capsFor(version: 1 | 2, level: 1 | 2, role: 'user' | 'admin' | 'member'
     };
   }
   return {
-    maxEnvs: pro ? 50 : 20,
+    maxEnvs,
     proxy: pro,
     importExport: pro,
     cloudBackup: pro,
@@ -147,31 +152,22 @@ function capsFor(version: 1 | 2, level: 1 | 2, role: 'user' | 'admin' | 'member'
   };
 }
 
-/** SKU 的 caps_json 覆盖（只允许覆盖已定义的布尔/数值项，非法值忽略） */
-function capsFromSku(sku: Sku | null, base: EntitlementCaps): EntitlementCaps {
-  if (!sku || !sku.capsJson) return base;
-  try {
-    const raw = JSON.parse(sku.capsJson) as Record<string, unknown>;
-    const caps: EntitlementCaps = { ...base };
-    if (typeof raw.maxEnvs === 'number' && Number.isFinite(raw.maxEnvs) && raw.maxEnvs >= 0) {
-      caps.maxEnvs = Math.floor(raw.maxEnvs);
-    }
-    for (const key of ['proxy', 'importExport', 'cloudBackup', 'teamManage', 'ipResources'] as const) {
-      if (typeof raw[key] === 'boolean') caps[key] = raw[key] as boolean;
-    }
-    return caps;
-  } catch {
-    return base;
-  }
-}
+const DURATION_LABEL: Record<string, string> = {
+  month: '月',
+  quarter: '季',
+  year: '年',
+  permanent: '永久',
+};
 
 function tierFromKey(key: LicenseKey | null): EntitlementTier | null {
   if (!key) return null;
   const duration = key.durationDays === 0 ? 'permanent' : key.durationDays >= 365 ? 'year' : key.durationDays >= 90 ? 'quarter' : 'month';
+  const versionLabel = key.tier === 2 ? '企业' : '个人';
+  const levelLabel = key.level === 2 ? '高级' : '普通';
   return {
     code: key.tierCode || `${key.tier === 2 ? 'ent' : 'per'}_${key.level === 2 ? 'pro' : 'normal'}_${duration}`,
     duration,
-    label: key.tierCode || '',
+    label: `${versionLabel}${levelLabel} · ${DURATION_LABEL[duration] || ''}`,
   };
 }
 
@@ -209,21 +205,13 @@ export async function getEntitlements(account: Account): Promise<Entitlements> {
     }
   }
 
-  // 优先使用 SKU 标签（后台配置），缺失时回退由卡密推导
-  let tier = tierFromKey(key);
-  let sku: Sku | null = null;
-  if (key.skuId) {
-    sku = await skuRepo().findOneBy({ id: key.skuId });
-    if (sku) {
-      tier = { code: sku.code, duration: sku.duration, label: sku.label };
-    }
-  }
-
+  const tier = tierFromKey(key);
   const version: 1 | 2 = key.tier === 2 ? 2 : 1;
   const level: 1 | 2 = key.level === 2 ? 2 : 1;
-  const caps = capsFromSku(sku, capsFor(version, level, role));
+  const maxEnvs = await resolveMaxEnvs(version, level, Number(key.maxEnvs || 0));
+  const caps = capsFor(version, level, role, maxEnvs);
   const expireAt = permanent ? null : new Date(expireSec * 1000).toISOString();
-  const versionKey = `k${key.id}:${version}:${level}:${seats}:${permanent ? 'inf' : expireSec}:${role}`;
+  const versionKey = `k${key.id}:${version}:${level}:${seats}:${maxEnvs}:${permanent ? 'inf' : expireSec}:${role}`;
   return {
     version: version === 2 ? 'enterprise' : 'personal',
     level: level === 2 ? 'pro' : 'normal',

@@ -3,7 +3,6 @@ import { AppDataSource } from '../config/database';
 import { Account } from '../entities/account/Account';
 import { Enterprise } from '../entities/account/Enterprise';
 import { LicenseKey } from '../entities/LicenseKey';
-import { Sku } from '../entities/account/Sku';
 import { UpgradeCode } from '../entities/account/UpgradeCode';
 import { SeatAddon } from '../entities/account/SeatAddon';
 import { ApiError } from '../middleware/errorHandler';
@@ -17,14 +16,13 @@ import { pushEntitlementsForAccountId } from './AccountEventService';
 
 /**
  * 升级码 / 席位扩容码（M6）
- * - 升级码：后台按目标 SKU 生成，客户端核销后直接作用于当前生效卡密（同档延长、跨档覆盖升级）。
+ * - 升级码：后台按「时长档位」生成（月/季/年/永久），客户端核销后把当前卡密同档位升为高级版，到期时间不变。
  * - 席位扩容码：只增不减，核销后 enterprise.seats 立即增加，不改版本/级别/到期时间。
  * - 两类码均以「状态条件更新」保证并发下只能核销一次。
  */
 
 const upgradeRepo = () => AppDataSource.getRepository(UpgradeCode);
 const seatRepo = () => AppDataSource.getRepository(SeatAddon);
-const skuRepo = () => AppDataSource.getRepository(Sku);
 
 /** 升级码只按「时长档位」生成：同档位普通版 → 高级版，到期时间不变 */
 const UPGRADE_DURATIONS = ['month', 'quarter', 'year', 'permanent'] as const;
@@ -83,9 +81,8 @@ function normalizeValidUntil(raw: string | number | undefined | null): Date | nu
 // ===========================================================================
 
 export interface CreateUpgradeCodesInput {
-  /** 时长档位（推荐）：月/季/年/永久，服务端自动找同档位高级套餐 */
+  /** 时长档位：月/季/年/永久；核销时只把当前卡密同档位升为高级版 */
   duration?: UpgradeDuration | null;
-  toSkuId?: string | null;
   fromSkuId?: string | null;
   accountId?: string | null;
   amount?: number | null;
@@ -112,20 +109,10 @@ export interface UpgradeCodeRow {
 }
 
 export async function createUpgradeCodes(input: CreateUpgradeCodesInput): Promise<UpgradeCodeRow[]> {
-  let sku: Sku | null = null;
-  if (isUpgradeDuration(input.duration)) {
-    // 以「同档位高级套餐」作为代表记录；个人/企业由核销时当前卡密决定
-    sku = await skuRepo().findOne({
-      where: { level: 2, duration: input.duration, enabled: 1 },
-      order: { version: 'ASC', sort: 'ASC', id: 'ASC' },
-    });
-    if (!sku) throw new ApiError(`${DURATION_LABEL[input.duration]}高级套餐未上架`, 4004, 400);
-  } else if (input.toSkuId) {
-    sku = await skuRepo().findOneBy({ id: input.toSkuId });
-    if (!sku) throw new ApiError('目标套餐不存在', 4004, 404);
-  } else {
+  if (!isUpgradeDuration(input.duration)) {
     throw new ApiError('请选择升级档位（月/季/年/永久）', 400, 400);
   }
+  const duration = input.duration;
   const count = Math.min(200, Math.max(1, Math.floor(input.count || 1)));
   const rows: UpgradeCode[] = [];
   for (let i = 0; i < count; i++) {
@@ -133,7 +120,8 @@ export async function createUpgradeCodes(input: CreateUpgradeCodesInput): Promis
       upgradeRepo().create({
         code: await uniqueUpgradeCode(),
         fromSkuId: input.fromSkuId || null,
-        toSkuId: sku.id,
+        toSkuId: null,
+        duration,
         accountId: input.accountId || null,
         amount: input.amount === undefined || input.amount === null ? null : String(input.amount),
         remark: input.remark || null,
@@ -147,9 +135,9 @@ export async function createUpgradeCodes(input: CreateUpgradeCodesInput): Promis
   return saved.map((r) => ({
     id: String(r.id),
     code: r.code,
-    toSkuCode: sku.code,
-    toSkuLabel: sku.label,
-    toDuration: isUpgradeDuration(sku.duration) ? sku.duration : null,
+    toSkuCode: null,
+    toSkuLabel: DURATION_LABEL[duration],
+    toDuration: duration,
     accountId: r.accountId,
     amount: r.amount,
     remark: r.remark,
@@ -175,21 +163,18 @@ export async function listUpgradeCodes(filter: {
   if (keyword) qb.andWhere('(c.code LIKE :kw OR c.remark LIKE :kw)', { kw: `%${keyword}%` });
   const total = await qb.getCount();
   const rows = await qb.orderBy('c.id', 'DESC').offset((page - 1) * pageSize).limit(pageSize).getMany();
-  const skuIds = Array.from(new Set(rows.map((r) => String(r.toSkuId))));
-  const skus = skuIds.length ? await skuRepo().createQueryBuilder('s').where('s.id IN (:...ids)', { ids: skuIds }).getMany() : [];
-  const skuMap = new Map(skus.map((s) => [String(s.id), s]));
   return {
     total,
     page,
     pageSize,
     list: rows.map((r) => {
-      const sku = skuMap.get(String(r.toSkuId));
+      const toDuration = isUpgradeDuration(r.duration) ? r.duration : null;
       return {
         id: String(r.id),
         code: r.code,
-        toSkuCode: sku?.code || null,
-        toSkuLabel: sku?.label || null,
-        toDuration: sku && isUpgradeDuration(sku.duration) ? sku.duration : null,
+        toSkuCode: null,
+        toSkuLabel: toDuration ? DURATION_LABEL[toDuration] : null,
+        toDuration,
         accountId: r.accountId,
         amount: r.amount,
         remark: r.remark,
@@ -236,37 +221,32 @@ export async function redeemUpgradeCode(account: Account, rawCode: string): Prom
   if (record.accountId && String(record.accountId) !== String(account.id)) {
     throw new ApiError('该升级码不属于当前账号', 4004, 400);
   }
-  const sku = await skuRepo().findOneBy({ id: record.toSkuId });
-  if (!sku || sku.enabled !== 1) throw new ApiError('目标套餐已下架', 4004, 400);
+  if (!isUpgradeDuration(record.duration)) {
+    throw new ApiError('该升级码档位无效，请联系客服', 4004, 400);
+  }
+  const duration = record.duration;
 
   const currentKey = await findEffectiveKey(account);
   if (!currentKey) throw new ApiError('当前账号没有生效授权，请先激活卡密', 4004, 400);
 
-  const duration: UpgradeDuration = isUpgradeDuration(sku.duration) ? sku.duration : durationOfDays(sku.durationDays);
   const currentTier = currentKey.tier === 2 ? 2 : 1;
   const currentLevel = currentKey.level === 2 ? 2 : 1;
   if (currentLevel >= 2) throw new ApiError('当前已是高级版，无需升级', 2007, 400);
 
   // 核销码的时长必须与当前卡密档位一致：只做「同档位 普通 → 高级」，不改变到期时间
-  const currentSku = currentKey.skuId ? await skuRepo().findOneBy({ id: currentKey.skuId }) : null;
-  const currentDuration: UpgradeDuration =
-    currentSku && isUpgradeDuration(currentSku.duration) ? currentSku.duration : durationOfDays(currentKey.durationDays);
+  const currentDuration: UpgradeDuration = durationOfDays(currentKey.durationDays);
   if (currentDuration !== duration) {
     throw new ApiError(`该升级码为${DURATION_LABEL[duration]}，与当前卡密档位（${DURATION_LABEL[currentDuration]}）不一致`, 2008, 400);
   }
 
-  const targetSku = await skuRepo().findOne({
-    where: { version: currentTier, level: 2, duration, enabled: 1 },
-    order: { sort: 'ASC', id: 'ASC' },
-  });
-  if (!targetSku) throw new ApiError(`${DURATION_LABEL[duration]}高级套餐未上架`, 4004, 400);
-
+  const tierCode = `${currentTier === 2 ? 'ent' : 'per'}_pro_${duration}`;
+  const skuLabel = `${currentTier === 2 ? '企业' : '个人'}高级 · ${DURATION_LABEL[duration]}`;
   const permanent = duration === 'permanent';
   const newExpireSec = permanent ? 0 : keyExpireSeconds(currentKey);
   const upgraded = true;
 
   const now = new Date();
-  let newSeats = Math.max(1, Number(currentKey.seats) || 1);
+  const newSeats = Math.max(1, Number(currentKey.seats) || 1);
 
   await AppDataSource.transaction(async (manager) => {
     const consumed = await manager
@@ -283,15 +263,14 @@ export async function redeemUpgradeCode(account: Account, rawCode: string): Prom
       .execute();
     if (!consumed.affected) throw new ApiError('该升级码已被使用', 4004, 400);
 
-    newSeats = Math.max(newSeats, Number(targetSku.seats) || 1);
     await manager
       .createQueryBuilder()
       .update(LicenseKey)
       .set({
         tier: currentTier,
         level: 2,
-        skuId: targetSku.id,
-        tierCode: targetSku.code,
+        skuId: null,
+        tierCode,
         durationDays: currentKey.durationDays,
         seats: newSeats,
         // 升级不改变到期时间：保持原卡密到期秒数（永久卡继续永久）
@@ -306,8 +285,8 @@ export async function redeemUpgradeCode(account: Account, rawCode: string): Prom
   await pushEntitlementsForAccountId(account.id);
   return {
     entitlements,
-    skuCode: targetSku.code,
-    skuLabel: targetSku.label,
+    skuCode: tierCode,
+    skuLabel,
     seats: newSeats,
     expireAt: permanent ? null : new Date(newExpireSec * 1000).toISOString(),
     permanent,

@@ -12,8 +12,12 @@ export class UpgradeCode {
   @Column({ type: 'bigint', name: 'from_sku_id', unsigned: true, nullable: true })
   fromSkuId!: string | null;
 
-  @Column({ type: 'bigint', name: 'to_sku_id', unsigned: true })
-  toSkuId!: string;
+  @Column({ type: 'bigint', name: 'to_sku_id', unsigned: true, nullable: true })
+  toSkuId!: string | null;
+
+  /** 升级目标时长档位（价格 SKU 已移除，升级码只按档位生成） */
+  @Column({ type: 'varchar', length: 16, nullable: true, comment: '升级目标时长档位 month/quarter/year/permanent' })
+  duration!: string | null;
 
   @Column({ type: 'bigint', name: 'account_id', unsigned: true, nullable: true, comment: '核销时锁定' })
   accountId!: string | null;

@@ -4,15 +4,12 @@ import { ok, fail, clientIp } from '../../middleware/helpers';
 import { ApiError } from '../../middleware/errorHandler';
 import { writeOperationLog } from '../../services/LogService';
 import {
-  listSkus,
-  createSku,
-  updateSku,
-  toggleSku,
   getUpgradeLinks,
   getSeatAddonMallUrl,
   saveMallConfig,
   buildClientConfig,
 } from '../../services/SkuService';
+import { getTierEnvLimits, saveTierEnvLimits, TIER_ENV_META } from '../../services/TierEnvService';
 import {
   createUpgradeCodes,
   listUpgradeCodes,
@@ -38,69 +35,35 @@ function sendError(res: Parameters<typeof fail>[0], e: unknown): boolean {
   return false;
 }
 
-const skuSchema = Joi.object({
-  code: Joi.string().trim().min(2).max(32).required(),
-  version: Joi.number().integer().valid(1, 2).required(),
-  level: Joi.number().integer().valid(1, 2).required(),
-  duration: Joi.string().valid('month', 'quarter', 'year', 'permanent').required(),
-  durationDays: Joi.number().integer().min(0).max(3650).required(),
-  label: Joi.string().trim().min(1).max(64).required(),
-  seats: Joi.number().integer().min(1).max(1000).required(),
-  mallUrl: Joi.string().allow('', null).max(512).optional(),
-  capsJson: Joi.string().allow('', null).max(2000).optional(),
-  sort: Joi.number().integer().min(0).max(9999).optional(),
-  enabled: Joi.boolean().optional(),
+// ==================== 档位环境管理 ====================
+
+// GET /api/admin/tier-env-limits
+router.get('/tier-env-limits', async (_req, res) => {
+  ok(res, { limits: await getTierEnvLimits(), tiers: TIER_ENV_META });
 });
 
-// GET /api/admin/skus（含停用，供后台运营页）
-router.get('/skus', async (_req, res) => {
-  ok(res, await listSkus(true));
-});
-
-// POST /api/admin/skus
-router.post('/skus', async (req, res) => {
-  const { error, value } = skuSchema.validate(req.body);
+// PUT /api/admin/tier-env-limits（保存即刷新在线账号权益）
+router.put('/tier-env-limits', async (req, res) => {
+  const envSchema = Joi.number().integer().min(0).max(100000).required();
+  const { error, value } = Joi.object({
+    v1l1: envSchema,
+    v1l2: envSchema,
+    v2l1: envSchema,
+    v2l2: envSchema,
+  }).validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   try {
-    const row = await createSku(value);
-    await writeOperationLog(req.auth!.userId, '新建套餐', '套餐与档位', JSON.stringify(value), clientIp(req));
-    ok(res, row);
-  } catch (e) {
-    if (sendError(res, e)) return;
-    throw e;
-  }
-});
-
-// PUT /api/admin/skus/:id
-router.put('/skus/:id', async (req, res) => {
-  const { error, value } = skuSchema.validate(req.body);
-  if (error) return fail(res, `参数错误：${error.message}`, 400);
-  try {
-    const row = await updateSku(String(req.params.id), value);
-    await writeOperationLog(req.auth!.userId, '修改套餐', '套餐与档位', JSON.stringify(value), clientIp(req));
-    // caps（如 maxEnvs 环境上限）变化后，立即刷新在线账号权益，客户端无需重登
-    if (value.capsJson !== undefined) await refreshAllEntitlements();
-    ok(res, row);
-  } catch (e) {
-    if (sendError(res, e)) return;
-    throw e;
-  }
-});
-
-// POST /api/admin/skus/:id/toggle
-router.post('/skus/:id/toggle', async (req, res) => {
-  const { error, value } = Joi.object({ enabled: Joi.boolean().required() }).validate(req.body);
-  if (error) return fail(res, `参数错误：${error.message}`, 400);
-  try {
-    const row = await toggleSku(String(req.params.id), value.enabled);
+    const limits = await saveTierEnvLimits(value as Record<string, unknown>);
+    // 环境上限属于系统级配置：已签发卡密未自带 maxEnvs 的账号立即按新配置生效
+    await refreshAllEntitlements();
     await writeOperationLog(
       req.auth!.userId,
-      value.enabled ? '启用套餐' : '停用套餐',
-      '套餐与档位',
-      row.code,
+      '修改档位环境数量',
+      '档位环境管理',
+      JSON.stringify(limits),
       clientIp(req)
     );
-    ok(res, row);
+    ok(res, { limits });
   } catch (e) {
     if (sendError(res, e)) return;
     throw e;
@@ -161,9 +124,8 @@ router.post('/push-config', async (req, res) => {
 // ==================== 升级码 ====================
 
 const upgradeCodeSchema = Joi.object({
-  // 新模型：只按时长档位生成（同档位普通 → 高级）
-  duration: Joi.string().valid('month', 'quarter', 'year', 'permanent').optional(),
-  toSkuId: Joi.alternatives().try(Joi.string(), Joi.number()).optional(),
+  // 只按时长档位生成（同档位普通 → 高级）
+  duration: Joi.string().valid('month', 'quarter', 'year', 'permanent').required(),
   fromSkuId: Joi.alternatives().try(Joi.string(), Joi.number()).allow(null, '').optional(),
   accountId: Joi.alternatives().try(Joi.string(), Joi.number()).allow(null, '').optional(),
   amount: Joi.number().min(0).max(1000000).allow(null).optional(),
@@ -190,11 +152,9 @@ router.get('/upgrade-codes', async (req, res) => {
 router.post('/upgrade-codes', async (req, res) => {
   const { error, value } = upgradeCodeSchema.validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
-  if (!value.duration && !value.toSkuId) return fail(res, '请选择升级档位（月/季/年/永久）', 400);
   try {
     const rows = await createUpgradeCodes({
-      duration: value.duration || null,
-      toSkuId: value.toSkuId ? String(value.toSkuId) : null,
+      duration: value.duration,
       fromSkuId: value.fromSkuId ? String(value.fromSkuId) : null,
       accountId: value.accountId ? String(value.accountId) : null,
       amount: value.amount ?? null,
@@ -206,8 +166,8 @@ router.post('/upgrade-codes', async (req, res) => {
     await writeOperationLog(
       req.auth!.userId,
       '生成升级码',
-      '套餐与档位',
-      JSON.stringify({ duration: value.duration || null, toSkuId: value.toSkuId || null, count: rows.length, accountId: value.accountId || null }),
+      '档位环境管理',
+      JSON.stringify({ duration: value.duration, count: rows.length, accountId: value.accountId || null }),
       clientIp(req)
     );
     ok(res, rows);

@@ -56,16 +56,16 @@ async function main(): Promise<void> {
   assert(maskHost('1.2.3.4') === '1.2.*.*', 'IPv4 需掩码');
   assert(maskHost('proxy.example.com') === 'proxy.***', '域名需掩码');
 
-  // 6. 默认 SKU：个人/企业 × 普通/高级 × 月/季/年/永久 = 16
-  const skus = buildSkuRows();
-  assert(skus.length === 16, `默认 SKU 应为 16 个，实际 ${skus.length}`);
-  const codes = new Set(skus.map((s) => s[0]));
-  assert(codes.size === 16, 'SKU code 必须唯一');
-  const durations = new Set(skus.map((s) => s[3]));
-  assert(durations.size === 4, 'SKU 时长应为 4 档');
-  assert(skus.every((s) => s[6] > 0), 'SKU 排序值应递增非零');
+  // 6. 固定档位：个人/企业 × 普通/高级 × 月/季/年/永久 = 16
+  const tiers = buildSkuRows();
+  assert(tiers.length === 16, `固定档位应为 16 个，实际 ${tiers.length}`);
+  const codes = new Set(tiers.map((t) => t[0]));
+  assert(codes.size === 16, '档位 code 必须唯一');
+  const durations = new Set(tiers.map((t) => t[3]));
+  assert(durations.size === 4, '档位时长应为 4 档');
+  assert(tiers.every((t) => t[6] > 0), '档位排序值应递增非零');
 
-  console.log('✅ M0 自检通过：密码哈希 / token / 重置码 / AES-GCM / 脱敏 / 16 SKU');
+  console.log('✅ M0 自检通过：密码哈希 / token / 重置码 / AES-GCM / 脱敏 / 16 档位');
 }
 
 main().catch((e) => {

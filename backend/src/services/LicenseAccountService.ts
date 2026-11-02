@@ -1,7 +1,6 @@
 import { AppDataSource } from '../config/database';
 import { Account } from '../entities/account/Account';
 import { LicenseKey } from '../entities/LicenseKey';
-import { Sku } from '../entities/account/Sku';
 import { ApiError } from '../middleware/errorHandler';
 import { decodeAndVerify } from '../crypto/licenseCodec';
 import { clientActivate, findByCode } from './KeyService';
@@ -18,7 +17,6 @@ import { writeOperationLog } from './LogService';
 import { sendTemplate } from './NotifyService';
 
 const keyRepo = () => AppDataSource.getRepository(LicenseKey);
-const skuRepo = () => AppDataSource.getRepository(Sku);
 
 export interface ActivateAccountInput {
   code: string;
@@ -85,12 +83,21 @@ export function toKeySummary(key: LicenseKey, currentId: string | null): KeySumm
   };
 }
 
-async function matchSku(tier: number, level: number, durationDays: number): Promise<Sku | null> {
-  const list = await skuRepo().find({ where: { version: tier, level } });
-  if (!list.length) return null;
-  if (durationDays === 0) return list.find((s) => s.duration === 'permanent') || null;
-  const duration = durationDays >= 365 ? 'year' : durationDays >= 90 ? 'quarter' : 'month';
-  return list.find((s) => s.duration === duration) || null;
+/** 固定档位编码 / 文案（价格 SKU 已移除） */
+function durationKeyOf(durationDays: number): string {
+  if (durationDays === 0) return 'permanent';
+  return durationDays >= 365 ? 'year' : durationDays >= 90 ? 'quarter' : 'month';
+}
+
+function tierCodeOf(tier: number, level: number, durationDays: number): string {
+  return `${tier === 2 ? 'ent' : 'per'}_${level === 2 ? 'pro' : 'normal'}_${durationKeyOf(durationDays)}`;
+}
+
+function tierLabelOf(tier: number, level: number, durationDays: number): string {
+  const durationLabel = ({ month: '月', quarter: '季', year: '年', permanent: '永久' } as Record<string, string>)[
+    durationKeyOf(durationDays)
+  ];
+  return `${tier === 2 ? '企业' : '个人'}${level === 2 ? '高级' : '普通'} · ${durationLabel}`;
 }
 
 /** 当前账号是否为企业成员（非管理员） */
@@ -236,14 +243,13 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
     }
   }
 
-  const sku = await matchSku(targetTier, targetLevel, targetDays);
   const seats = Math.max(1, Number(key.seats) || 1);
 
   key.accountId = account.id;
   key.tier = targetTier;
   key.level = targetLevel;
-  key.tierCode = key.tierCode || sku?.code || null;
-  key.skuId = key.skuId || sku?.id || null;
+  key.tierCode = key.tierCode || tierCodeOf(targetTier, targetLevel, targetDays);
+  key.skuId = null;
   key.durationDays = targetDays;
   key.seats = seats;
   key.activatedAt = key.activatedAt || now;
@@ -269,7 +275,7 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
   const freshAccount = (await AppDataSource.getRepository(Account).findOneBy({ id: account.id })) || account;
   const entitlements = await getEntitlements(freshAccount);
   // 激活 / 续费 / 升级通知（失败不影响激活主流程）
-  const tierText = sku?.label || `${targetTier === 2 ? '企业版' : '个人版'}${targetLevel === 2 ? '高级' : '普通'}`;
+  const tierText = tierLabelOf(targetTier, targetLevel, targetDays);
   const expireText = permanent ? '永久有效' : new Date(newExpireSec * 1000).toISOString().slice(0, 10);
   void sendTemplate('LICENSE_ACTIVATED', {
     username: freshAccount.nickname || freshAccount.login,

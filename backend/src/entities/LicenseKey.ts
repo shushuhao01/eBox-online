@@ -81,6 +81,9 @@ export class LicenseKey {
   @Column({ type: 'int', default: 1, comment: '同时在线设备/子账户席位' })
   seats!: number;
 
+  @Column({ type: 'int', name: 'max_envs', default: 0, comment: '环境数量上限，0=不限制' })
+  maxEnvs!: number;
+
   @Column({ type: 'bigint', name: 'enterprise_id', unsigned: true, nullable: true })
   enterpriseId!: string | null;
 

@@ -215,8 +215,17 @@
           <el-input-number v-model="genForm.seats" :min="1" :max="1000" />
           <span class="text-secondary" style="margin-left: 8px">（默认 1，可按需调整；企业版填席位总数）</span>
         </el-form-item>
-        <el-form-item label="档位编码">
-          <el-input v-model="genForm.tierCode" placeholder="可选，对应套餐 SKU 编码" maxlength="32" style="width: 300px" />
+        <el-form-item label="环境数量">
+          <el-input-number
+            v-model="genForm.maxEnvs"
+            :min="0"
+            :max="100000"
+            :value-on-clear="0"
+            @change="maxEnvsManual = true"
+          />
+          <span class="text-secondary" style="margin-left: 8px">
+            0 = 不限制（默认）；已按档位环境管理带出，可自定义
+          </span>
         </el-form-item>
         <el-form-item label="数量" required>
           <el-input-number v-model="genForm.count" :min="1" :max="500" />
@@ -312,7 +321,7 @@
           <el-descriptions-item label="档位">
             {{ detail.key.tier === 2 ? '企业' : '个人' }} · {{ detail.key.level === 2 ? '高级' : '普通' }}
             <span v-if="detail.key.tier === 2"> / {{ detail.key.seats }} 席</span>
-            <span v-if="detail.key.tierCode" class="text-secondary"> / {{ detail.key.tierCode }}</span>
+            <span class="text-secondary"> / 环境数量：{{ detail.key.maxEnvs > 0 ? detail.key.maxEnvs : '不限制' }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="客户">
             {{ detail.key.customerId ? `客户#${detail.key.customerId}` : '-' }}
@@ -385,7 +394,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import {
   Search, Refresh, RefreshLeft, Plus, Download, CopyDocument, CircleClose, Delete,
@@ -398,6 +407,7 @@ import {
 } from '@/api/keys'
 import { getCustomers, type Customer } from '@/api/customers'
 import { getBatches, type KeyBatch } from '@/api/batches'
+import { getTierEnvLimits } from '@/api/mall'
 import TimeCell from '@/components/TimeCell.vue'
 import {
   KEY_STATUS, KEY_TYPE, copyText, formatDuration, formatTime, formatUnixTs, formatUnbindMax,
@@ -593,8 +603,31 @@ const genForm = reactive({
   version: 1,
   level: 1,
   seats: 1,
-  tierCode: '',
+  maxEnvs: 0,
 })
+
+/** 用户改动过环境数量后，切换版本/级别不再覆盖 */
+const maxEnvsManual = ref(false)
+/** 系统级「档位环境管理」配置（0=不限制） */
+const tierEnvLimits = ref<Record<string, number>>({})
+
+function applyTierEnvDefault() {
+  if (maxEnvsManual.value) return
+  const key = `v${genForm.version === 2 ? 2 : 1}l${genForm.level === 2 ? 2 : 1}`
+  genForm.maxEnvs = Number(tierEnvLimits.value[key] || 0)
+}
+
+async function loadTierEnvLimits() {
+  try {
+    const res = await getTierEnvLimits()
+    tierEnvLimits.value = res.limits
+  } catch {
+    tierEnvLimits.value = {}
+  }
+  applyTierEnvDefault()
+}
+
+watch([() => genForm.version, () => genForm.level], () => applyTierEnvDefault())
 
 const customDays = ref(30)
 const customMode = ref(false) // true=自定义时长（与快捷时长互斥）
@@ -653,7 +686,8 @@ function resetGenerateForm() {
   genForm.version = 1
   genForm.level = 1
   genForm.seats = 1
-  genForm.tierCode = ''
+  genForm.maxEnvs = 0
+  maxEnvsManual.value = false
   customDays.value = 30
   customMode.value = false
 }
@@ -662,6 +696,7 @@ function openGenerate() {
   generateVisible.value = true
   genStep.value = 0
   resetGenerateForm()
+  void loadTierEnvLimits()
   genResult.codes = []
   genResult.batchId = null
   genShownCount.value = 50
@@ -688,7 +723,7 @@ async function submitGenerate() {
     version: genForm.version,
     level: genForm.level,
     seats: genForm.seats,
-    tierCode: genForm.tierCode.trim() || null,
+    maxEnvs: genForm.maxEnvs,
   }
   generating.value = true
   try {

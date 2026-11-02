@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS \`upgrade_codes\` (
   \`id\` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   \`code\` VARCHAR(64) NOT NULL,
   \`from_sku_id\` BIGINT UNSIGNED NULL,
-  \`to_sku_id\` BIGINT UNSIGNED NOT NULL,
+  \`to_sku_id\` BIGINT UNSIGNED NULL,
   \`account_id\` BIGINT UNSIGNED NULL,
   \`amount\` DECIMAL(10,2) NULL,
   \`remark\` VARCHAR(255) NULL,
@@ -362,6 +362,7 @@ const LICENSE_KEY_COLUMNS: Array<{ name: string; ddl: string }> = [
   { name: 'tier_code', ddl: 'VARCHAR(32) NULL' },
   { name: 'duration_days', ddl: 'INT NOT NULL DEFAULT 0' },
   { name: 'seats', ddl: 'INT NOT NULL DEFAULT 1' },
+  { name: 'max_envs', ddl: 'INT NOT NULL DEFAULT 0' },
   { name: 'enterprise_id', ddl: 'BIGINT UNSIGNED NULL' },
   { name: 'activated_at', ddl: 'DATETIME NULL' },
   { name: 'account_expire_at', ddl: 'DATETIME NULL' },
@@ -386,6 +387,7 @@ const NOTIFICATION_TEMPLATE_COLUMNS: Array<{ name: string; ddl: string }> = [
 const UPGRADE_CODE_COLUMNS: Array<{ name: string; ddl: string }> = [
   { name: 'amount', ddl: 'DECIMAL(10,2) NULL' },
   { name: 'remark', ddl: 'VARCHAR(255) NULL' },
+  { name: 'duration', ddl: "VARCHAR(16) NULL COMMENT '升级目标时长档位 month/quarter/year/permanent'" },
 ];
 
 /** seat_addons 增量字段（M6 备注） */
@@ -458,26 +460,12 @@ async function ensureColumns(
   return missing.length;
 }
 
-async function seedSkus(runner: QueryRunner): Promise<void> {
-  const rows = buildSkuRows();
-  const placeholders = rows.map(() => '(?, ?, ?, ?, ?, ?, 1, NULL, 1, ?)').join(',');
-  const params: unknown[] = [];
-  for (const [code, version, level, duration, days, label, sort] of rows) {
-    params.push(code, version, level, duration, days, label, sort);
-  }
-  await runner.query(
-    `INSERT IGNORE INTO \`skus\`
-      (\`code\`, \`version\`, \`level\`, \`duration\`, \`duration_days\`, \`label\`, \`seats\`, \`mall_url\`, \`enabled\`, \`sort\`)
-     VALUES ${placeholders}`,
-    params
-  );
-}
-
 async function seedAppConfigs(runner: QueryRunner): Promise<void> {
   await runner.query(
     `INSERT IGNORE INTO \`app_configs\` (\`cfg_key\`, \`cfg_value\`, \`remark\`) VALUES
-      ('upgrade_links', '{}', '商城升级链接 JSON（按 SKU code 配置）'),
+      ('upgrade_links', '{}', '商城升级链接 JSON（按档位 code 配置）'),
       ('seat_addon_mall_url', '', '扩容码商城链接'),
+      ('tier_env_limits', '{}', '档位环境数量上限 JSON：v1l1/v1l2/v2l1/v2l2，0 或缺失=不限制'),
       ('config_version', '1', '客户端配置版本号（任意配置变更自增，用于 SSE 增量推送）'),
       ('disclaimer_version', '1', '免责声明/用户协议版本'),
       ('smtp_host', '', 'SMTP 主机，空则找回密码走人工'),
@@ -567,7 +555,13 @@ export async function ensureAccountSchema(): Promise<void> {
     await ensureColumns(runner, 'seat_addons', SEAT_ADDON_COLUMNS);
     await ensureColumns(runner, 'notification_templates', NOTIFICATION_TEMPLATE_COLUMNS);
 
-    await seedSkus(runner);
+    // 价格 SKU 已废弃：升级码改按“时长档位”存储，历史升级码回填后清理 SKU 数据
+    await runner.query('ALTER TABLE `upgrade_codes` MODIFY COLUMN `to_sku_id` BIGINT UNSIGNED NULL');
+    await runner.query(
+      'UPDATE `upgrade_codes` uc JOIN `skus` s ON s.id = uc.to_sku_id SET uc.duration = s.duration WHERE uc.duration IS NULL'
+    );
+    await runner.query('DELETE FROM `skus`');
+
     await seedAppConfigs(runner);
     await seedNotificationTemplates(runner);
 

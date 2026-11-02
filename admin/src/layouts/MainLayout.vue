@@ -197,10 +197,10 @@ const menus: MenuNode[] = [
   {
     kind: 'group',
     key: 'resources',
-    title: '套餐与资源',
+    title: '档位与资源',
     icon: 'ShoppingCart',
     children: [
-      { title: '套餐与档位', path: '/mall', icon: 'ShoppingCart' },
+      { title: '档位环境管理', path: '/mall', icon: 'ShoppingCart' },
       { title: 'IP 资源', path: '/ip-resources', icon: 'Connection' },
     ],
   },

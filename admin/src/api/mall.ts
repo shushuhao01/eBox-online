@@ -1,18 +1,18 @@
 import { get, post, put, type PageResult } from './request'
 
-export interface SkuItem {
-  id: string
-  code: string
+/** 档位环境数量上限（系统级配置，0=不限制） */
+export type TierEnvLimits = Record<'v1l1' | 'v1l2' | 'v2l1' | 'v2l2', number>
+
+export interface TierEnvMeta {
+  key: keyof TierEnvLimits
   version: number
   level: number
-  duration: string
-  durationDays: number
   label: string
-  seats: number
-  mallUrl: string | null
-  capsJson: string | null
-  enabled: boolean
-  sort: number
+}
+
+export interface TierEnvState {
+  limits: TierEnvLimits
+  tiers: TierEnvMeta[]
 }
 
 export interface UpgradeLinksState {
@@ -66,18 +66,15 @@ export interface SeatAddonRow {
   createdAt: string
 }
 
-// ==================== SKU / 商城链接 ====================
+// ==================== 档位环境管理 / 商城链接 ====================
 
-export function getSkus() {
-  return get<SkuItem[]>('/skus')
+export function getTierEnvLimits() {
+  return get<TierEnvState>('/tier-env-limits')
 }
 
-export function updateSku(id: string, data: Partial<SkuItem> & { capsJson?: string | null }) {
-  return put<SkuItem>(`/skus/${id}`, data)
-}
-
-export function toggleSku(id: string, enabled: boolean) {
-  return post<SkuItem>(`/skus/${id}/toggle`, { enabled })
+/** 保存档位环境数量（保存即刷新在线账号权益） */
+export function saveTierEnvLimits(data: TierEnvLimits) {
+  return put<{ limits: TierEnvLimits }>('/tier-env-limits', data)
 }
 
 export function getUpgradeLinks() {
@@ -107,7 +104,6 @@ export function getUpgradeCodes(params: {
 
 export function createUpgradeCodes(data: {
   duration: string
-  toSkuId?: string | null
   fromSkuId?: string | null
   accountId?: string | null
   remark?: string

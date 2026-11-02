@@ -337,14 +337,12 @@ import {
   getSeatAddons,
   createSeatAddons,
   voidSeatAddon,
-  getSkus,
   getUpgradeCodes,
   createUpgradeCodes,
   voidUpgradeCode,
   getUpgradeLinks,
   saveUpgradeLinks,
   type SeatAddonRow,
-  type SkuItem,
   type UpgradeCodeRow,
 } from '@/api/mall'
 
@@ -370,28 +368,33 @@ const UPGRADE_DURATIONS: Array<{ key: string; label: string }> = [
 const upgradeUrls = reactive<Record<string, string>>({ month: '', quarter: '', year: '', permanent: '' })
 const seatAddonMallUrl = ref('')
 const savingMall = ref(false)
-const skus = ref<SkuItem[]>([])
 
-/** 把每个时长的链接展开写入该时长全部 SKU code（含个人/企业、普通/高级） */
+/** 固定档位 code：个人/企业 × 普通/高级 × 4 时长（价格 SKU 已移除） */
+function tierCodesOf(duration: string): string[] {
+  const codes: string[] = []
+  for (const v of [1, 2]) {
+    for (const l of [1, 2]) codes.push(`${v === 2 ? 'ent' : 'per'}_${l === 2 ? 'pro' : 'normal'}_${duration}`)
+  }
+  return codes
+}
+
+/** 把每个时长的链接展开写入该时长全部档位 code（含个人/企业、普通/高级） */
 function buildUpgradeLinks(): Record<string, string> {
   const links: Record<string, string> = {}
   for (const g of UPGRADE_DURATIONS) {
     const url = (upgradeUrls[g.key] || '').trim()
     if (!url) continue
-    for (const s of skus.value) {
-      if (s.duration === g.key) links[s.code] = url
-    }
+    for (const code of tierCodesOf(g.key)) links[code] = url
   }
   return links
 }
 
 async function loadMallLink() {
-  const [state, rows] = await Promise.all([getUpgradeLinks(), getSkus()])
-  skus.value = rows
+  const state = await getUpgradeLinks()
   seatAddonMallUrl.value = state.seatAddonMallUrl || ''
   for (const g of UPGRADE_DURATIONS) {
-    const hit = rows.find((s) => s.duration === g.key && !!state.links[s.code])
-    upgradeUrls[g.key] = hit ? state.links[hit.code] : ''
+    const hit = tierCodesOf(g.key).find((code) => !!state.links[code])
+    upgradeUrls[g.key] = hit ? state.links[hit] : ''
   }
 }
 

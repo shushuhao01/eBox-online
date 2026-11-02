@@ -15,6 +15,7 @@ import { generateKeys, revokeKey, restoreKey, restoreDeletedKey, convertToSwitch
 import { writeOperationLog } from '../../services/LogService';
 import { notifyKeyChange } from '../../services/AccountEventService';
 import { getOnlineWindowMinutes } from '../../services/ConfigService';
+import { resolveMaxEnvs } from '../../services/TierEnvService';
 import { decodeAndVerify, normalizeCode } from '../../crypto/licenseCodec';
 
 const router = Router();
@@ -40,12 +41,15 @@ router.post('/keys/generate', async (req, res) => {
       version: Joi.number().integer().valid(1, 2).default(1),
       level: Joi.number().integer().valid(1, 2).default(1),
       seats: Joi.number().integer().min(1).max(1000).default(1),
-      tierCode: Joi.string().allow('', null).max(32).default(null),
+      // 环境数量上限：0=不限制；未传时取系统「档位环境管理」配置
+      maxEnvs: Joi.number().integer().min(0).max(100000).allow(null).default(null),
     }).validate(req.body);
     if (error) return fail(res, `参数错误：${error.message}`, 400);
     console.log(`[gen] validate ok t=${Date.now()}`);
 
-    const { codes, batchId } = await generateKeys({ ...value, createdBy: req.auth!.userId });
+    const maxEnvs =
+      value.maxEnvs === null ? await resolveMaxEnvs(value.version, value.level, 0) : Number(value.maxEnvs);
+    const { codes, batchId } = await generateKeys({ ...value, maxEnvs, createdBy: req.auth!.userId });
     console.log(`[gen] generateKeys 返回 ${codes.length} 个 t=${Date.now()}`);
     const durationText = value.durationSec === 0 ? '永久' : `${Math.floor(value.durationSec / 86400)}天`;
     const unbindText = !value.bound ? '-' : value.unbindMax < 0 ? '不限' : value.unbindMax === 0 ? '禁止' : `每月${value.unbindMax}次`;
@@ -59,7 +63,7 @@ router.post('/keys/generate', async (req, res) => {
       req.auth!.userId,
       '生成激活码',
       target,
-      `数量=${value.count} 时长=${durationText} 绑定=${value.bound ? '绑定' : '通用'} 解绑上限=${unbindText} 版本=${value.version === 2 ? '企业' : '个人'} 级别=${value.level === 2 ? '高级' : '普通'} 席位=${value.seats}${value.customerId ? ` 客户ID=${value.customerId}` : ''}`,
+      `数量=${value.count} 时长=${durationText} 绑定=${value.bound ? '绑定' : '通用'} 解绑上限=${unbindText} 版本=${value.version === 2 ? '企业' : '个人'} 级别=${value.level === 2 ? '高级' : '普通'} 席位=${value.seats} 环境数量=${maxEnvs > 0 ? maxEnvs : '不限制'}${value.customerId ? ` 客户ID=${value.customerId}` : ''}`,
       clientIp(req)
     );
     console.log(`[gen] respond t=${Date.now()}`);

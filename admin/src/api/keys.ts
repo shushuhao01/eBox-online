@@ -26,6 +26,8 @@ export interface LicenseKeyItem {
   level: number
   seats: number
   tierCode: string | null
+  /** 环境数量上限，0=不限制 */
+  maxEnvs: number
   durationDays: number
   accountId: string | null
   enterpriseId: string | null
@@ -59,7 +61,8 @@ export interface GenerateParams {
   /** 级别：1=普通 2=高级，默认 1 */
   level?: number
   seats?: number
-  tierCode?: string | null
+  /** 环境数量上限，0=不限制；不传则默认取「档位环境管理」配置 */
+  maxEnvs?: number | null
 }
 
 export type KeyListParams = {

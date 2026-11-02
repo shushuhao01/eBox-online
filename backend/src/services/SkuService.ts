@@ -1,32 +1,16 @@
 import { AppDataSource } from '../config/database';
-import { Sku } from '../entities/account/Sku';
 import { AppConfig } from '../entities/account/AppConfig';
 import { ApiError } from '../middleware/errorHandler';
+import { buildSkuRows } from '../config/ensureAccountSchema';
 import { broadcastConfig } from './AccountEventService';
 
 /**
- * 套餐 SKU 与商城升级链接（M6）
- * - SKU 由后台维护，16 条为默认种子；客户端只按 code/标签/链接渲染。
+ * 客户端档位与商城升级链接
+ * - 价格 SKU 已移除：档位固定为 个人/企业 × 普通/高级 × 月/季/年/永久 共 16 个 code。
  * - 商城链接保存在 app_configs.upgrade_links（code → URL），变更后 SSE 推送 config 事件。
  */
 
-const skuRepo = () => AppDataSource.getRepository(Sku);
 const configRepo = () => AppDataSource.getRepository(AppConfig);
-
-export interface SkuView {
-  id: string;
-  code: string;
-  version: number;
-  level: number;
-  duration: string;
-  durationDays: number;
-  label: string;
-  seats: number;
-  mallUrl: string | null;
-  capsJson: string | null;
-  enabled: boolean;
-  sort: number;
-}
 
 export interface ClientTierView {
   code: string;
@@ -48,26 +32,18 @@ export interface ClientConfigView {
   tiers: ClientTierView[];
 }
 
-export function toSkuView(sku: Sku): SkuView {
-  return {
-    id: String(sku.id),
-    code: sku.code,
-    version: sku.version,
-    level: sku.level,
-    duration: sku.duration,
-    durationDays: sku.durationDays,
-    label: sku.label,
-    seats: sku.seats,
-    mallUrl: sku.mallUrl || null,
-    capsJson: sku.capsJson ?? null,
-    enabled: sku.enabled === 1,
-    sort: sku.sort,
-  };
-}
-
-export async function listSkus(includeDisabled = true): Promise<SkuView[]> {
-  const rows = await skuRepo().find({ order: { sort: 'ASC', id: 'ASC' } });
-  return rows.filter((s) => includeDisabled || s.enabled === 1).map(toSkuView);
+/** 固定档位列表（code 与历史 SKU 一致，客户端按 code 取商城链接） */
+export function listClientTiers(): ClientTierView[] {
+  return buildSkuRows().map(([code, version, level, duration, durationDays, label]) => ({
+    code,
+    version,
+    level,
+    duration,
+    durationDays,
+    label,
+    seats: 1,
+    mallUrl: '',
+  }));
 }
 
 async function getConfigValue(cfgKey: string, fallback = ''): Promise<string> {
@@ -107,13 +83,12 @@ function parsePositive(raw: string, fallback: number): number {
 
 /** 客户端配置整包（/api/config/client 与 SSE config 事件同构） */
 export async function buildClientConfig(): Promise<ClientConfigView> {
-  const [links, seatAddonMallUrl, disclaimerRaw, ipVersionRaw, configVersionRaw, skus] = await Promise.all([
+  const [links, seatAddonMallUrl, disclaimerRaw, ipVersionRaw, configVersionRaw] = await Promise.all([
     getUpgradeLinks(),
     getSeatAddonMallUrl(),
     getConfigValue('disclaimer_version', '1'),
     getConfigValue('ip_resource_version', '1'),
     getConfigValue('config_version', '1'),
-    listSkus(false),
   ]);
   return {
     disclaimerVersion: parsePositive(disclaimerRaw, 1),
@@ -121,16 +96,7 @@ export async function buildClientConfig(): Promise<ClientConfigView> {
     seatAddonMallUrl,
     ipResourceVersion: parsePositive(ipVersionRaw, 1),
     configVersion: parsePositive(configVersionRaw, 1),
-    tiers: skus.map((s) => ({
-      code: s.code,
-      version: s.version,
-      level: s.level,
-      duration: s.duration,
-      durationDays: s.durationDays,
-      label: s.label,
-      seats: s.seats,
-      mallUrl: s.mallUrl || '',
-    })),
+    tiers: listClientTiers().map((t) => ({ ...t, mallUrl: links[t.code] || '' })),
   };
 }
 
@@ -144,23 +110,22 @@ export interface SaveMallConfigResult {
   delivered: number;
 }
 
-/** 保存商城链接：仅接受已存在 SKU 的 code，URL 必须 http(s) 或空（空=联系客服） */
+/** 保存商城链接：仅接受固定档位 code，URL 必须 http(s) 或空（空=联系客服） */
 export async function saveMallConfig(input: SaveMallConfigInput): Promise<SaveMallConfigResult> {
   if (input.upgradeLinks === undefined && input.seatAddonMallUrl === undefined) {
     throw new ApiError('至少需要提交升级链接或扩容码商城链接', 400, 400);
   }
   if (input.upgradeLinks !== undefined) {
-    const skus = await skuRepo().find();
-    const codeSet = new Set(skus.map((s) => s.code));
+    const codeSet = new Set(listClientTiers().map((t) => t.code));
     const links: Record<string, string> = {};
     for (const [code, raw] of Object.entries(input.upgradeLinks)) {
-      if (!codeSet.has(code)) throw new ApiError(`未知套餐编码：${code}`, 400, 400);
+      if (!codeSet.has(code)) throw new ApiError(`未知档位编码：${code}`, 400, 400);
       const url = String(raw ?? '').trim();
       if (!url) continue;
-      if (!/^https?:\/\//i.test(url)) throw new ApiError(`套餐 ${code} 的链接必须以 http(s):// 开头`, 400, 400);
+      if (!/^https?:\/\//i.test(url)) throw new ApiError(`档位 ${code} 的链接必须以 http(s):// 开头`, 400, 400);
       links[code] = url;
     }
-    await saveConfigValue('upgrade_links', JSON.stringify(links), '商城升级链接 JSON（按 SKU code 配置）');
+    await saveConfigValue('upgrade_links', JSON.stringify(links), '商城升级链接 JSON（按档位 code 配置）');
   }
   if (input.seatAddonMallUrl !== undefined) {
     const url = String(input.seatAddonMallUrl ?? '').trim();
@@ -184,71 +149,4 @@ export interface SaveUpgradeLinksResult {
 /** 兼容旧调用：仅保存升级链接 */
 export async function saveUpgradeLinks(input: Record<string, unknown>): Promise<SaveUpgradeLinksResult> {
   return saveMallConfig({ upgradeLinks: input });
-}
-
-export interface SkuInput {
-  code: string;
-  version: number;
-  level: number;
-  duration: string;
-  durationDays: number;
-  label: string;
-  seats: number;
-  mallUrl?: string | null;
-  capsJson?: string | null;
-  sort?: number;
-  enabled?: boolean;
-}
-
-function normalizeSkuInput(input: SkuInput): Partial<Sku> {
-  return {
-    code: input.code.trim(),
-    version: input.version,
-    level: input.level,
-    duration: input.duration,
-    durationDays: input.durationDays,
-    label: input.label.trim(),
-    seats: Math.max(1, Math.floor(input.seats)),
-    mallUrl: input.mallUrl?.trim() || null,
-    capsJson: input.capsJson?.trim() || null,
-    sort: Number.isFinite(input.sort) ? Math.floor(input.sort as number) : 0,
-    enabled: input.enabled === false ? 0 : 1,
-  };
-}
-
-export async function createSku(input: SkuInput): Promise<SkuView> {
-  const repo = skuRepo();
-  const exists = await repo.findOneBy({ code: input.code.trim() });
-  if (exists) throw new ApiError('套餐编码已存在', 400, 400);
-  const row = repo.create(normalizeSkuInput(input));
-  await repo.save(row);
-  return toSkuView(row);
-}
-
-export async function updateSku(id: string, input: SkuInput): Promise<SkuView> {
-  const repo = skuRepo();
-  const row = await repo.findOneBy({ id });
-  if (!row) throw new ApiError('套餐不存在', 4004, 404);
-  const patch = normalizeSkuInput(input);
-  if (patch.code && patch.code !== row.code) {
-    const dup = await repo.findOneBy({ code: patch.code });
-    if (dup) throw new ApiError('套餐编码已存在', 400, 400);
-  }
-  Object.assign(row, patch);
-  await repo.save(row);
-  return toSkuView(row);
-}
-
-export async function toggleSku(id: string, enabled: boolean): Promise<SkuView> {
-  const repo = skuRepo();
-  const row = await repo.findOneBy({ id });
-  if (!row) throw new ApiError('套餐不存在', 4004, 404);
-  row.enabled = enabled ? 1 : 0;
-  await repo.save(row);
-  return toSkuView(row);
-}
-
-/** 供其它服务按 id 取 SKU（核销升级码等） */
-export async function findSkuById(id: string): Promise<Sku | null> {
-  return skuRepo().findOneBy({ id });
 }

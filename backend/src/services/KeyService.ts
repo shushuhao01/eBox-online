@@ -36,7 +36,7 @@ export interface GenerateParams {
   version?: number; // 1=个人 2=企业
   level?: number; // 1=普通 2=高级
   seats?: number;
-  tierCode?: string | null;
+  maxEnvs?: number; // 环境数量上限，0=不限制
   createdBy: string;
 }
 
@@ -78,7 +78,7 @@ export async function generateKeys(p: GenerateParams): Promise<{ codes: string[]
       tier: p.version === 2 ? 2 : 1,
       level: p.level === 2 ? 2 : 1,
       seats: Math.max(1, Math.floor(p.seats || 1)),
-      tierCode: p.tierCode || null,
+      maxEnvs: Math.max(0, Math.floor(p.maxEnvs || 0)),
       durationDays: Math.floor(p.durationSec / 86400),
       createdBy: p.createdBy,
       createdAt: new Date(),
@@ -482,6 +482,7 @@ export async function clientUnbind(
       tier: key.tier,
       level: key.level,
       seats: key.seats,
+      maxEnvs: key.maxEnvs,
       tierCode: key.tierCode,
       skuId: key.skuId,
       accountId: key.accountId,
@@ -599,6 +600,7 @@ export async function convertToSwitchKey(keyId: string, operatorId: string): Pro
       tier: key.tier,
       level: key.level,
       seats: key.seats,
+      maxEnvs: key.maxEnvs,
       tierCode: key.tierCode,
       skuId: key.skuId,
       accountId: key.accountId,
