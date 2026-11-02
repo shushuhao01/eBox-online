@@ -60,8 +60,9 @@ export interface GenerateParams {
   version?: number
   /** 级别：1=普通 2=高级，默认 1 */
   level?: number
-  seats?: number
-  /** 环境数量上限，0=不限制；不传则默认取「档位环境管理」配置 */
+  /** 席位上限，0=不限制；不传则默认取「环境与席位」的档位席位配置 */
+  seats?: number | null
+  /** 环境数量上限，0=不限制；不传则默认取「环境与席位」的档位环境配置 */
   maxEnvs?: number | null
 }
 

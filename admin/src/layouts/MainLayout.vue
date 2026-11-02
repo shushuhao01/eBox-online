@@ -200,7 +200,7 @@ const menus: MenuNode[] = [
     title: '档位与资源',
     icon: 'ShoppingCart',
     children: [
-      { title: '档位环境管理', path: '/mall', icon: 'ShoppingCart' },
+      { title: '环境与席位', path: '/mall', icon: 'ShoppingCart' },
       { title: 'IP 资源', path: '/ip-resources', icon: 'Connection' },
     ],
   },

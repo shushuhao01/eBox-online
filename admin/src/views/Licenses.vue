@@ -76,7 +76,7 @@
             <el-tag size="small" :type="row.tier === 2 ? 'warning' : 'info'" effect="plain">
               {{ row.tier === 2 ? '企业' : '个人' }} · {{ row.level === 2 ? '高级' : '普通' }}
             </el-tag>
-            <span v-if="row.tier === 2" class="seat-sub text-secondary">{{ row.seats }} 席</span>
+            <span v-if="row.tier === 2" class="seat-sub text-secondary">{{ row.seats > 0 ? `${row.seats} 席` : '不限席位' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="时长 / 到期" width="210">
@@ -212,8 +212,10 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="席位">
-          <el-input-number v-model="genForm.seats" :min="1" :max="1000" />
-          <span class="text-secondary" style="margin-left: 8px">（默认 1，可按需调整；企业版填席位总数）</span>
+          <el-input-number v-model="genForm.seats" :min="0" :max="1000" :value-on-clear="0" @change="seatsManual = true" />
+          <span class="text-secondary" style="margin-left: 8px">
+            0 = 不限制；已按档位席位配置带出，可自定义（企业版填席位总数）
+          </span>
         </el-form-item>
         <el-form-item label="环境数量">
           <el-input-number
@@ -224,7 +226,7 @@
             @change="maxEnvsManual = true"
           />
           <span class="text-secondary" style="margin-left: 8px">
-            0 = 不限制（默认）；已按档位环境管理带出，可自定义
+            0 = 不限制（默认）；已按「环境与席位」配置带出，可自定义
           </span>
         </el-form-item>
         <el-form-item label="数量" required>
@@ -320,7 +322,7 @@
           </el-descriptions-item>
           <el-descriptions-item label="档位">
             {{ detail.key.tier === 2 ? '企业' : '个人' }} · {{ detail.key.level === 2 ? '高级' : '普通' }}
-            <span v-if="detail.key.tier === 2"> / {{ detail.key.seats }} 席</span>
+            <span v-if="detail.key.tier === 2"> / {{ detail.key.seats > 0 ? `${detail.key.seats} 席` : '不限席位' }}</span>
             <span class="text-secondary"> / 环境数量：{{ detail.key.maxEnvs > 0 ? detail.key.maxEnvs : '不限制' }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="客户">
@@ -407,7 +409,7 @@ import {
 } from '@/api/keys'
 import { getCustomers, type Customer } from '@/api/customers'
 import { getBatches, type KeyBatch } from '@/api/batches'
-import { getTierEnvLimits } from '@/api/mall'
+import { getTierLimits } from '@/api/mall'
 import TimeCell from '@/components/TimeCell.vue'
 import {
   KEY_STATUS, KEY_TYPE, copyText, formatDuration, formatTime, formatUnixTs, formatUnbindMax,
@@ -602,32 +604,49 @@ const genForm = reactive({
   remark: '',
   version: 1,
   level: 1,
-  seats: 1,
+  seats: 0,
   maxEnvs: 0,
 })
 
 /** 用户改动过环境数量后，切换版本/级别不再覆盖 */
 const maxEnvsManual = ref(false)
-/** 系统级「档位环境管理」配置（0=不限制） */
+/** 用户改动过席位后，切换版本/级别不再覆盖 */
+const seatsManual = ref(false)
+/** 系统级「环境与席位」配置（0=不限制） */
 const tierEnvLimits = ref<Record<string, number>>({})
+const tierSeatLimits = ref<Record<string, number>>({})
+
+function tierKey() {
+  return `v${genForm.version === 2 ? 2 : 1}l${genForm.level === 2 ? 2 : 1}`
+}
 
 function applyTierEnvDefault() {
   if (maxEnvsManual.value) return
-  const key = `v${genForm.version === 2 ? 2 : 1}l${genForm.level === 2 ? 2 : 1}`
-  genForm.maxEnvs = Number(tierEnvLimits.value[key] || 0)
+  genForm.maxEnvs = Number(tierEnvLimits.value[tierKey()] || 0)
+}
+
+function applyTierSeatDefault() {
+  if (seatsManual.value) return
+  genForm.seats = Number(tierSeatLimits.value[tierKey()] || 0)
 }
 
 async function loadTierEnvLimits() {
   try {
-    const res = await getTierEnvLimits()
-    tierEnvLimits.value = res.limits
+    const res = await getTierLimits()
+    tierEnvLimits.value = res.envLimits
+    tierSeatLimits.value = res.seatLimits
   } catch {
     tierEnvLimits.value = {}
+    tierSeatLimits.value = {}
   }
   applyTierEnvDefault()
+  applyTierSeatDefault()
 }
 
-watch([() => genForm.version, () => genForm.level], () => applyTierEnvDefault())
+watch([() => genForm.version, () => genForm.level], () => {
+  applyTierEnvDefault()
+  applyTierSeatDefault()
+})
 
 const customDays = ref(30)
 const customMode = ref(false) // true=自定义时长（与快捷时长互斥）
@@ -685,9 +704,10 @@ function resetGenerateForm() {
   genForm.remark = ''
   genForm.version = 1
   genForm.level = 1
-  genForm.seats = 1
+  genForm.seats = 0
   genForm.maxEnvs = 0
   maxEnvsManual.value = false
+  seatsManual.value = false
   customDays.value = 30
   customMode.value = false
 }

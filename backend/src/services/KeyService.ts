@@ -77,7 +77,7 @@ export async function generateKeys(p: GenerateParams): Promise<{ codes: string[]
       remark: p.remark || null,
       tier: p.version === 2 ? 2 : 1,
       level: p.level === 2 ? 2 : 1,
-      seats: Math.max(1, Math.floor(p.seats || 1)),
+      seats: Math.max(0, Math.floor(p.seats ?? 0)),
       maxEnvs: Math.max(0, Math.floor(p.maxEnvs || 0)),
       durationDays: Math.floor(p.durationSec / 86400),
       createdBy: p.createdBy,

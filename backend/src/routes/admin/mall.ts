@@ -9,7 +9,7 @@ import {
   saveMallConfig,
   buildClientConfig,
 } from '../../services/SkuService';
-import { getTierEnvLimits, saveTierEnvLimits, TIER_ENV_META } from '../../services/TierEnvService';
+import { getTierEnvLimits, saveTierEnvLimits, getTierSeatLimits, saveTierSeatLimits, TIER_ENV_META } from '../../services/TierEnvService';
 import {
   createUpgradeCodes,
   listUpgradeCodes,
@@ -35,35 +35,45 @@ function sendError(res: Parameters<typeof fail>[0], e: unknown): boolean {
   return false;
 }
 
-// ==================== 档位环境管理 ====================
+// ==================== 环境与席位管理 ====================
 
-// GET /api/admin/tier-env-limits
-router.get('/tier-env-limits', async (_req, res) => {
-  ok(res, { limits: await getTierEnvLimits(), tiers: TIER_ENV_META });
+// GET /api/admin/tier-limits
+router.get('/tier-limits', async (_req, res) => {
+  ok(res, {
+    envLimits: await getTierEnvLimits(),
+    seatLimits: await getTierSeatLimits(),
+    tiers: TIER_ENV_META,
+  });
 });
 
-// PUT /api/admin/tier-env-limits（保存即刷新在线账号权益）
-router.put('/tier-env-limits', async (req, res) => {
-  const envSchema = Joi.number().integer().min(0).max(100000).required();
+// PUT /api/admin/tier-limits（保存即刷新在线账号权益）
+router.put('/tier-limits', async (req, res) => {
+  const limitSchema = Joi.object({
+    v1l1: Joi.number().integer().min(0).max(100000).required(),
+    v1l2: Joi.number().integer().min(0).max(100000).required(),
+    v2l1: Joi.number().integer().min(0).max(100000).required(),
+    v2l2: Joi.number().integer().min(0).max(100000).required(),
+  });
   const { error, value } = Joi.object({
-    v1l1: envSchema,
-    v1l2: envSchema,
-    v2l1: envSchema,
-    v2l2: envSchema,
-  }).validate(req.body);
+    envLimits: limitSchema.optional(),
+    seatLimits: limitSchema.optional(),
+  })
+    .or('envLimits', 'seatLimits')
+    .validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   try {
-    const limits = await saveTierEnvLimits(value as Record<string, unknown>);
+    const envLimits = value.envLimits ? await saveTierEnvLimits(value.envLimits) : await getTierEnvLimits();
+    const seatLimits = value.seatLimits ? await saveTierSeatLimits(value.seatLimits) : await getTierSeatLimits();
     // 环境上限属于系统级配置：已签发卡密未自带 maxEnvs 的账号立即按新配置生效
     await refreshAllEntitlements();
     await writeOperationLog(
       req.auth!.userId,
-      '修改档位环境数量',
-      '档位环境管理',
-      JSON.stringify(limits),
+      '修改环境与席位配置',
+      '环境与席位',
+      JSON.stringify({ envLimits, seatLimits }),
       clientIp(req)
     );
-    ok(res, { limits });
+    ok(res, { envLimits, seatLimits, tiers: TIER_ENV_META });
   } catch (e) {
     if (sendError(res, e)) return;
     throw e;

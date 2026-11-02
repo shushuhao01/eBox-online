@@ -1,6 +1,6 @@
 import { get, post, put, type PageResult } from './request'
 
-/** 档位环境数量上限（系统级配置，0=不限制） */
+/** 环境数量/席位上限（系统级配置，0=不限制） */
 export type TierEnvLimits = Record<'v1l1' | 'v1l2' | 'v2l1' | 'v2l2', number>
 
 export interface TierEnvMeta {
@@ -10,8 +10,9 @@ export interface TierEnvMeta {
   label: string
 }
 
-export interface TierEnvState {
-  limits: TierEnvLimits
+export interface TierLimitState {
+  envLimits: TierEnvLimits
+  seatLimits: TierEnvLimits
   tiers: TierEnvMeta[]
 }
 
@@ -66,15 +67,15 @@ export interface SeatAddonRow {
   createdAt: string
 }
 
-// ==================== 档位环境管理 / 商城链接 ====================
+// ==================== 环境与席位管理 / 商城链接 ====================
 
-export function getTierEnvLimits() {
-  return get<TierEnvState>('/tier-env-limits')
+export function getTierLimits() {
+  return get<TierLimitState>('/tier-limits')
 }
 
-/** 保存档位环境数量（保存即刷新在线账号权益） */
-export function saveTierEnvLimits(data: TierEnvLimits) {
-  return put<{ limits: TierEnvLimits }>('/tier-env-limits', data)
+/** 保存环境数量与席位上限（保存即刷新在线账号权益） */
+export function saveTierLimits(data: { envLimits?: TierEnvLimits; seatLimits?: TierEnvLimits }) {
+  return put<{ envLimits: TierEnvLimits; seatLimits: TierEnvLimits; tiers: TierEnvMeta[] }>('/tier-limits', data)
 }
 
 export function getUpgradeLinks() {
