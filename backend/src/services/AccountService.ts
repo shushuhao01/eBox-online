@@ -17,7 +17,8 @@ import {
   generateResetCode,
   hashResetCode,
 } from '../utils/accountCrypto';
-import { sendMail, type SmtpConfig } from './MailService';
+import { loadSmtpConfig } from './SmtpConfigService';
+import { sendTemplate, sendTemplateToEmail } from './NotifyService';
 
 const accountRepo = () => AppDataSource.getRepository(Account);
 const sessionRepo = () => AppDataSource.getRepository(AccountSession);
@@ -138,6 +139,8 @@ export async function registerAccount(input: RegisterInput): Promise<Account> {
     input.deviceFp ?? '',
     input.ip ?? ''
   );
+  // 注册成功通知（失败不影响注册主流程）
+  void sendTemplate('REGISTER', { username: saved.nickname || login, email: email || '' });
   return saved;
 }
 
@@ -437,29 +440,6 @@ export interface ResetRequestResult {
   expireMinutes: number;
 }
 
-/** 读取 SMTP 配置（app_configs 优先，环境变量兜底）；未配置主机返回 null */
-async function loadSmtpConfig(): Promise<SmtpConfig | null> {
-  const [host, portRaw, user, pass, from] = await Promise.all([
-    getAppConfigValue('smtp_host'),
-    getAppConfigValue('smtp_port'),
-    getAppConfigValue('smtp_user'),
-    getAppConfigValue('smtp_pass'),
-    getAppConfigValue('smtp_from'),
-  ]);
-  const smtpHost = (host || process.env.SMTP_HOST || '').trim();
-  if (!smtpHost) return null;
-  const port = Number(portRaw || process.env.SMTP_PORT || 465) || 465;
-  const smtpUser = (user || process.env.SMTP_USER || '').trim();
-  return {
-    host: smtpHost,
-    port,
-    secure: port === 465,
-    user: smtpUser,
-    pass: pass || process.env.SMTP_PASS || '',
-    from: (from || process.env.SMTP_FROM || smtpUser || smtpHost).trim(),
-  };
-}
-
 /** 已登录修改密码（本人） */
 export async function changePassword(account: Account, oldPassword: string, newPassword: string): Promise<void> {
   if (!(await verifyPassword(oldPassword, account.passwordHash))) {
@@ -470,6 +450,7 @@ export async function changePassword(account: Account, oldPassword: string, newP
   account.passwordHash = await hashPassword(newPassword);
   await accountRepo().save(account);
   // 改密后吊销其他设备会话（保留当前会话由路由层决定，这里不处理）
+  void sendTemplate('PASSWORD_CHANGED', { username: account.nickname || account.login });
 }
 
 /**
@@ -494,18 +475,10 @@ export async function requestPasswordReset(input: { login: string; ip?: string }
   await accountRepo().save(account);
 
   try {
-    await sendMail(smtp, {
-      to: email,
-      subject: 'eBox 账号密码重置验证码',
-      text: [
-        '您好：',
-        '',
-        `您正在找回 eBox 账号（${maskLogin(login)}）的登录密码，验证码：${code}`,
-        '',
-        `验证码 ${RESET_CODE_MINUTES} 分钟内有效，最多尝试 ${RESET_CODE_MAX_ATTEMPTS} 次。如非本人操作，请忽略本邮件。`,
-        '',
-        'eBox 授权服务',
-      ].join('\r\n'),
+    await sendTemplateToEmail('PASSWORD_RESET_CODE', email, {
+      username: account.nickname || maskLogin(login),
+      code,
+      minutes: RESET_CODE_MINUTES,
     });
   } catch (e) {
     // 发送失败不保留验证码，避免用户拿到一个“已发送但收不到”的码

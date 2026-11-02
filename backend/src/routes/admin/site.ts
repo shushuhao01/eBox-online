@@ -34,6 +34,7 @@ import {
   buildShortUrl,
 } from '../../services/ChannelService';
 import QRCode from 'qrcode';
+import { notifyVersionUpgrade } from '../../services/NotifyService';
 
 const router = Router();
 
@@ -657,10 +658,14 @@ router.put('/release', async (req, res) => {
   }).validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   const v = value as Record<string, unknown>;
+  const before = await getSiteSettings();
+  const oldVersion = (before.release_version || '').trim();
+  const newVersion = String(v.release_version || '').trim();
+  const changelogJson = normalizeChangelog(v.release_changelog);
   await setSiteSettings({
-    release_version: String(v.release_version || ''),
+    release_version: newVersion,
     release_date: String(v.release_date || ''),
-    release_changelog: normalizeChangelog(v.release_changelog),
+    release_changelog: changelogJson,
   });
   clearReleaseCache();
   await writeOperationLog(
@@ -670,6 +675,17 @@ router.put('/release', async (req, res) => {
     `日期=${v.release_date || '-'}`,
     clientIp(req)
   );
+  // 版本号变化时发送升级通知（只发渠道与站内信，异步执行不阻塞响应）
+  if (newVersion && newVersion !== oldVersion) {
+    let changelog: string[] = [];
+    try {
+      const parsed = JSON.parse(changelogJson) as unknown;
+      if (Array.isArray(parsed)) changelog = parsed.map((x) => String(x));
+    } catch {
+      changelog = [];
+    }
+    void notifyVersionUpgrade(newVersion, changelog);
+  }
   ok(res, pickReleaseConfig(await getSiteSettings()));
 });
 

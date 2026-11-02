@@ -36,6 +36,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'heartbeats', name: 'Heartbeats', component: () => import('@/views/Heartbeats.vue'), meta: { title: '心跳日志', icon: 'Timer' } },
       { path: 'agencies', name: 'ClientAgencies', component: () => import('@/views/ClientAgencies.vue'), meta: { title: '客户端代理商', icon: 'Shop' } },
       { path: 'site', name: 'SiteManage', component: () => import('@/views/site/SiteManage.vue'), meta: { title: '官网管理', icon: 'Platform' } },
+      { path: 'marketing', name: 'Marketing', component: () => import('@/views/Marketing.vue'), meta: { title: '营销管理', icon: 'Promotion' } },
       { path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue'), meta: { title: '系统设置', icon: 'Setting' } },
       { path: 'logs', name: 'Logs', component: () => import('@/views/Logs.vue'), meta: { title: '操作日志', icon: 'Document' } },
       { path: 'users', name: 'Users', component: () => import('@/views/Users.vue'), meta: { title: '管理员', icon: 'Lock', superOnly: true } },

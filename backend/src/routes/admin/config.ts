@@ -34,6 +34,33 @@ const schema = Joi.object({
   // 操作日志自动清理：保留天数 + 每日清理时间（HH:mm）
   log_retention_days: Joi.number().integer().min(1).max(365).optional(),
   log_clean_time: Joi.string().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  // 邮件发件
+  mail_enabled: Joi.string().valid('0', '1').optional(),
+  smtp_host: Joi.string().allow('').max(255).optional(),
+  smtp_port: Joi.number().integer().min(1).max(65535).optional(),
+  smtp_user: Joi.string().allow('').max(255).optional(),
+  smtp_pass: Joi.string().allow('').max(512).optional(),
+  smtp_from: Joi.string().allow('').max(255).optional(),
+  mail_from_name: Joi.string().allow('').max(128).optional(),
+  mail_site_url: Joi.string().allow('').max(500).optional(),
+  // 短信（阿里云）
+  sms_enabled: Joi.string().valid('0', '1').optional(),
+  sms_provider: Joi.string().valid('aliyun').optional(),
+  sms_access_key_id: Joi.string().allow('').max(128).optional(),
+  sms_access_key_secret: Joi.string().allow('').max(256).optional(),
+  sms_sign_name: Joi.string().allow('').max(128).optional(),
+  sms_region: Joi.string()
+    .valid('cn-hangzhou', 'cn-shanghai', 'cn-beijing', 'cn-shenzhen')
+    .optional(),
+  sms_tpl_verify_code: Joi.string().allow('').max(64).optional(),
+  sms_admin_phone: Joi.string().allow('').max(64).optional(),
+  // 通知渠道
+  notify_dingtalk_url: Joi.string().allow('').max(500).optional(),
+  notify_dingtalk_secret: Joi.string().allow('').max(256).optional(),
+  notify_wecom_url: Joi.string().allow('').max(500).optional(),
+  notify_email_to: Joi.string().allow('').max(500).optional(),
+  notify_sms_phone: Joi.string().allow('').max(500).optional(),
+  notify_global_enabled: Joi.string().valid('0', '1').optional(),
 });
 
 // 公告发送/定时发送请求体（携带草稿内容，一次提交即发布，避免“保存后再发送”的两步不一致）
@@ -78,11 +105,16 @@ router.get('/', async (_req, res) => {
   ok(res, { ...all, ...(await noticeState()), notice_stream_clients: onlineCount() });
 });
 
+// 敏感配置：提交空值或占位符 __SET__ 表示“保持原值”
+const SECRET_KEYS = new Set(['smtp_pass', 'sms_access_key_secret', 'notify_dingtalk_secret']);
+
 router.put('/', async (req, res) => {
   const { error, value } = schema.validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   for (const [k, v] of Object.entries(value)) {
-    await setConfigValue(k, String(v));
+    const text = String(v);
+    if (SECRET_KEYS.has(k) && (text === '' || text === '__SET__')) continue;
+    await setConfigValue(k, text);
   }
   await writeOperationLog(req.auth!.userId, '修改系统设置', '系统设置', JSON.stringify(value), clientIp(req));
   const all = await getConfigAll();

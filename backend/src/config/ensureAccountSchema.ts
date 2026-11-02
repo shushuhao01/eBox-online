@@ -269,6 +269,74 @@ CREATE TABLE IF NOT EXISTS \`app_configs\` (
   UNIQUE KEY \`uk_app_configs_key\` (\`cfg_key\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
 
+/** 消息模板（邮件 / 短信 / 钉钉 / 企业微信 / 站内信统一编排） */
+const CREATE_NOTIFICATION_TEMPLATES = `
+CREATE TABLE IF NOT EXISTS \`notification_templates\` (
+  \`id\` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  \`code\` VARCHAR(64) NOT NULL,
+  \`name\` VARCHAR(128) NOT NULL,
+  \`category\` VARCHAR(32) NULL,
+  \`title\` VARCHAR(255) NULL,
+  \`content\` TEXT NULL,
+  \`channels\` VARCHAR(128) NOT NULL DEFAULT '',
+  \`sms_template_code\` VARCHAR(64) NULL,
+  \`is_enabled\` TINYINT NOT NULL DEFAULT 1,
+  \`auto_trigger\` TINYINT NOT NULL DEFAULT 1,
+  \`sort_order\` INT NOT NULL DEFAULT 0,
+  \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  \`updated_at\` DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY \`uk_notification_templates_code\` (\`code\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
+
+/** 站内信（通知模板每次触发写一条，管理端可查看/标记已读） */
+const CREATE_SYSTEM_MESSAGES = `
+CREATE TABLE IF NOT EXISTS \`system_messages\` (
+  \`id\` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  \`title\` VARCHAR(255) NOT NULL,
+  \`content\` TEXT NULL,
+  \`category\` VARCHAR(32) NULL,
+  \`is_read\` TINYINT NOT NULL DEFAULT 0,
+  \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY \`idx_system_messages_created\` (\`created_at\`),
+  KEY \`idx_system_messages_category\` (\`category\`, \`created_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
+
+/** 营销邮件活动（管理后台「营销管理」） */
+const CREATE_MARKETING_CAMPAIGNS = `
+CREATE TABLE IF NOT EXISTS \`marketing_campaigns\` (
+  \`id\` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  \`title\` VARCHAR(255) NOT NULL,
+  \`subject\` VARCHAR(255) NULL,
+  \`content\` MEDIUMTEXT NULL,
+  \`audience_type\` VARCHAR(32) NOT NULL DEFAULT 'ALL_USERS',
+  \`target_json\` TEXT NULL,
+  \`status\` VARCHAR(16) NOT NULL DEFAULT 'DRAFT',
+  \`sent_count\` INT NOT NULL DEFAULT 0,
+  \`failed_count\` INT NOT NULL DEFAULT 0,
+  \`send_at\` DATETIME NULL,
+  \`sent_at\` DATETIME NULL,
+  \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  \`updated_at\` DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+  KEY \`idx_marketing_campaigns_status\` (\`status\`, \`send_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
+
+/** 营销邮件收件人快照（送达 / 失败 / 打开统计） */
+const CREATE_MARKETING_RECIPIENTS = `
+CREATE TABLE IF NOT EXISTS \`marketing_recipients\` (
+  \`id\` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  \`campaign_id\` BIGINT UNSIGNED NOT NULL,
+  \`email\` VARCHAR(128) NOT NULL,
+  \`username\` VARCHAR(64) NULL,
+  \`token\` VARCHAR(64) NULL,
+  \`delivered\` TINYINT NOT NULL DEFAULT 0,
+  \`error\` VARCHAR(500) NULL,
+  \`sent_at\` DATETIME NULL,
+  \`opened_at\` DATETIME NULL,
+  \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY \`uk_marketing_recipients_token\` (\`token\`),
+  KEY \`idx_marketing_recipients_campaign\` (\`campaign_id\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
+
 /** 存量表增量字段（全部可空或带默认值，旧代码不感知） */
 const LICENSE_KEY_COLUMNS: Array<{ name: string; ddl: string }> = [
   { name: 'account_id', ddl: 'BIGINT UNSIGNED NULL' },
@@ -395,6 +463,33 @@ async function seedAppConfigs(runner: QueryRunner): Promise<void> {
   );
 }
 
+/** 内置消息模板（INSERT IGNORE：已存在则保留运营修改） */
+async function seedNotificationTemplates(runner: QueryRunner): Promise<void> {
+  await runner.query(
+    `INSERT IGNORE INTO \`notification_templates\`
+      (\`code\`, \`name\`, \`category\`, \`title\`, \`content\`, \`channels\`, \`sms_template_code\`, \`is_enabled\`, \`auto_trigger\`, \`sort_order\`)
+     VALUES
+      ('REGISTER', '注册成功', 'account', '欢迎加入 eBox',
+       '您好 {username}，您的 eBox 账号已注册成功。\\n\\n如有疑问请联系客服，祝您使用愉快。',
+       'SYSTEM,EMAIL', NULL, 1, 1, 10),
+      ('PASSWORD_RESET_CODE', '找回密码验证码', 'account', 'eBox 账号密码重置验证码',
+       '您好 {username}：\\n\\n您正在找回 eBox 账号的登录密码，验证码：{code}\\n\\n验证码 {minutes} 分钟内有效。如非本人操作，请忽略本邮件。\\n\\n{site_name}',
+       'EMAIL', NULL, 1, 1, 20),
+      ('PASSWORD_CHANGED', '密码已修改', 'account', '账号密码已修改',
+       '您好 {username}，您的账号密码已于 {time} 修改。如非本人操作，请立即联系客服。',
+       'SYSTEM', NULL, 1, 1, 30),
+      ('LICENSE_ACTIVATED', '授权激活成功', 'license', '授权激活成功',
+       '您好 {username}，您的授权已激活成功。\\n版本：{tier_text}\\n到期时间：{expire_at}',
+       'SYSTEM', NULL, 1, 1, 40),
+      ('LICENSE_EXPIRING', '授权临期提醒', 'license', '授权即将到期',
+       '您好 {username}，您的授权将在 {days} 天后到期（{expire_at}），请及时续费以免影响使用。',
+       'SYSTEM,EMAIL', NULL, 1, 1, 50),
+      ('VERSION_UPGRADE', '版本升级通知', 'system', 'eBox 新版本 {version}',
+       'eBox 已发布新版本 {version}。\\n更新内容：\\n{changelog}\\n请前往官网下载更新。',
+       'SYSTEM,DINGTALK,WECOM,EMAIL', NULL, 1, 1, 60)`
+  );
+}
+
 /** 幂等执行，失败仅告警不阻断启动（与 ensureSchema 策略一致） */
 export async function ensureAccountSchema(): Promise<void> {
   const runner = AppDataSource.createQueryRunner();
@@ -414,6 +509,10 @@ export async function ensureAccountSchema(): Promise<void> {
     await runner.query(CREATE_AGREEMENT_ACCEPTANCES);
     await runner.query(CREATE_TEAM_METRICS_DAILY);
     await runner.query(CREATE_APP_CONFIGS);
+    await runner.query(CREATE_NOTIFICATION_TEMPLATES);
+    await runner.query(CREATE_SYSTEM_MESSAGES);
+    await runner.query(CREATE_MARKETING_CAMPAIGNS);
+    await runner.query(CREATE_MARKETING_RECIPIENTS);
 
     await ensureColumns(runner, 'license_keys', LICENSE_KEY_COLUMNS);
     await ensureColumns(runner, 'devices', DEVICE_COLUMNS);
@@ -424,6 +523,7 @@ export async function ensureAccountSchema(): Promise<void> {
 
     await seedSkus(runner);
     await seedAppConfigs(runner);
+    await seedNotificationTemplates(runner);
 
     // 存量卡密回填：仅修正非法座位数，不覆盖已配置的值
     await runner.query('UPDATE `license_keys` SET `seats` = 1 WHERE `seats` IS NULL OR `seats` < 1');

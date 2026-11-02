@@ -187,6 +187,294 @@
           </div>
         </el-tab-pane>
 
+        <!-- 邮件发件 -->
+        <el-tab-pane label="邮件发件" name="mail">
+          <div class="tab-body">
+            <div class="form-item">
+              <div class="form-label">
+                邮件发件 <span class="hint">用于验证码邮件、临期提醒与通知邮件</span>
+              </div>
+              <el-switch v-model="mailEnabled" active-text="开启" inactive-text="关闭" inline-prompt />
+            </div>
+
+            <el-divider />
+
+            <div class="form-item">
+              <div class="form-grid">
+                <div class="grid-row">
+                  <span class="grid-label">SMTP 主机</span>
+                  <el-input v-model="mailForm.smtp_host" placeholder="smtp.example.com" style="width: 320px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">SMTP 端口</span>
+                  <el-input v-model="mailForm.smtp_port" placeholder="465" style="width: 160px" />
+                  <span class="hint">465 使用 TLS，其他端口走 STARTTLS</span>
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">SMTP 账号</span>
+                  <el-input v-model="mailForm.smtp_user" placeholder="noreply@example.com" style="width: 320px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">SMTP 密码</span>
+                  <el-input
+                    v-model="mailForm.smtp_pass"
+                    type="password"
+                    show-password
+                    :placeholder="smtpPassSet ? '已设置（留空则不修改）' : '请输入 SMTP 密码'"
+                    style="width: 320px"
+                  />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">发件地址</span>
+                  <el-input v-model="mailForm.smtp_from" placeholder="留空则使用 SMTP 账号" style="width: 320px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">发件人名称</span>
+                  <el-input v-model="mailForm.mail_from_name" placeholder="eBox 授权服务" style="width: 320px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">站点地址</span>
+                  <el-input v-model="mailForm.mail_site_url" placeholder="https://example.com（用于邮件内链接）" style="width: 420px" />
+                </div>
+              </div>
+            </div>
+
+            <el-divider />
+
+            <div class="form-item">
+              <div class="form-label">发送测试邮件</div>
+              <div class="clean-row">
+                <el-input v-model="mailTestTo" placeholder="测试收件人邮箱" style="width: 260px" />
+                <el-button type="primary" plain :loading="mailTesting" @click="handleTestMail">发送测试邮件</el-button>
+              </div>
+            </div>
+
+            <el-divider />
+
+            <div class="form-item">
+              <el-button type="primary" :icon="Check" :loading="mailSaving" @click="saveMailConfig">保存</el-button>
+              <el-button :icon="RefreshLeft" @click="loadNotifyConfig">重置</el-button>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- 短信配置 -->
+        <el-tab-pane label="短信配置" name="sms">
+          <div class="tab-body">
+            <div class="form-item">
+              <div class="form-label">
+                短信发件 <span class="hint">基于阿里云短信服务（Dysmsapi 2017-05-25）</span>
+              </div>
+              <el-switch v-model="smsEnabled" active-text="开启" inactive-text="关闭" inline-prompt />
+            </div>
+
+            <el-divider />
+
+            <div class="form-item">
+              <div class="form-grid">
+                <div class="grid-row">
+                  <span class="grid-label">服务商</span>
+                  <el-input model-value="阿里云" disabled style="width: 200px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">AccessKey ID</span>
+                  <el-input v-model="smsForm.sms_access_key_id" placeholder="LTAI..." style="width: 320px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">AccessKey Secret</span>
+                  <el-input
+                    v-model="smsForm.sms_access_key_secret"
+                    type="password"
+                    show-password
+                    :placeholder="smsSecretSet ? '已设置（留空则不修改）' : '请输入 AccessKey Secret'"
+                    style="width: 320px"
+                  />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">短信签名</span>
+                  <el-input v-model="smsForm.sms_sign_name" placeholder="已在阿里云审核通过的签名" style="width: 320px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">Region</span>
+                  <el-select v-model="smsForm.sms_region" style="width: 200px">
+                    <el-option label="华东 1（杭州）" value="cn-hangzhou" />
+                    <el-option label="华东 2（上海）" value="cn-shanghai" />
+                    <el-option label="华北 2（北京）" value="cn-beijing" />
+                    <el-option label="华南 1（深圳）" value="cn-shenzhen" />
+                  </el-select>
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">验证码模板 CODE</span>
+                  <el-input v-model="smsForm.sms_tpl_verify_code" placeholder="SMS_xxxxxxxx" style="width: 240px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">管理员手机号</span>
+                  <el-input v-model="smsForm.sms_admin_phone" placeholder="用于接收管理通知（可选）" style="width: 260px" />
+                </div>
+              </div>
+            </div>
+
+            <el-divider />
+
+            <div class="form-item">
+              <div class="form-label">连通性 / 测试发送</div>
+              <div class="clean-row">
+                <el-input v-model="smsTestPhone" placeholder="测试手机号" style="width: 220px" />
+                <el-button :loading="smsConnTesting" @click="handleTestSmsConnection">测试连通</el-button>
+                <el-button type="primary" plain :loading="smsTesting" @click="handleTestSms">发送测试短信</el-button>
+              </div>
+              <span class="hint">测试短信使用验证码模板 CODE，模板变量为 {code} = 123456</span>
+            </div>
+
+            <el-divider />
+
+            <div class="form-item">
+              <el-button type="primary" :icon="Check" :loading="smsSaving" @click="saveSmsConfig">保存</el-button>
+              <el-button :icon="RefreshLeft" @click="loadNotifyConfig">重置</el-button>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- 消息模板 -->
+        <el-tab-pane label="消息模板" name="notify">
+          <div class="tab-body">
+            <div class="sub-card">
+              <div class="sub-title">通知渠道</div>
+              <div class="form-item">
+                <div class="form-label">
+                  全局通知 <span class="hint">关闭后仅写站内信，不再向钉钉 / 企业微信 / 邮件 / 短信外发</span>
+                </div>
+                <el-switch v-model="notifyGlobalEnabled" active-text="开启" inactive-text="关闭" inline-prompt />
+              </div>
+
+              <el-divider />
+
+              <div class="form-grid">
+                <div class="grid-row">
+                  <span class="grid-label">钉钉 Webhook</span>
+                  <el-input v-model="notifyForm.notify_dingtalk_url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." style="width: 480px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">钉钉加签密钥</span>
+                  <el-input
+                    v-model="notifyForm.notify_dingtalk_secret"
+                    type="password"
+                    show-password
+                    :placeholder="dingtalkSecretSet ? '已设置（留空则不修改）' : 'SEC...（可选，机器人加签）'"
+                    style="width: 480px"
+                  />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">企业微信 Webhook</span>
+                  <el-input v-model="notifyForm.notify_wecom_url" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..." style="width: 480px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">通知邮箱</span>
+                  <el-input v-model="notifyForm.notify_email_to" placeholder="多个邮箱用逗号分隔，仅发送第一个" style="width: 480px" />
+                </div>
+                <div class="grid-row">
+                  <span class="grid-label">通知手机号</span>
+                  <el-input v-model="notifyForm.notify_sms_phone" placeholder="多个手机号用逗号分隔，仅发送第一个" style="width: 480px" />
+                </div>
+              </div>
+
+              <div class="form-item" style="margin-top: 20px">
+                <el-button type="primary" :icon="Check" :loading="notifySaving" @click="saveNotifyConfig">保存</el-button>
+                <el-button :icon="RefreshLeft" @click="loadNotifyConfig">重置</el-button>
+              </div>
+            </div>
+
+            <div class="sub-card">
+              <div class="sub-title">消息模板</div>
+              <div class="tpl-toolbar">
+                <el-select v-model="tplQuery.category" placeholder="分类" clearable style="width: 130px" @change="searchTemplates">
+                  <el-option label="账号" value="account" />
+                  <el-option label="授权" value="license" />
+                  <el-option label="系统" value="system" />
+                </el-select>
+                <el-input
+                  v-model="tplQuery.keyword"
+                  placeholder="编码 / 名称 / 标题"
+                  clearable
+                  style="width: 220px"
+                  @keyup.enter="searchTemplates"
+                />
+                <el-button :icon="Search" @click="searchTemplates">查询</el-button>
+                <el-button :icon="Plus" type="primary" @click="openTemplateDialog()">新建模板</el-button>
+              </div>
+
+              <el-table :data="tplList" v-loading="tplLoading" stripe>
+                <el-table-column label="编码" min-width="160">
+                  <template #default="{ row }">
+                    <span class="code-font">{{ row.code }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="名称" min-width="150" prop="name" show-overflow-tooltip />
+                <el-table-column label="分类" width="100">
+                  <template #default="{ row }">{{ CATEGORY_LABELS[row.category] || row.category || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="渠道" min-width="220">
+                  <template #default="{ row }">
+                    <el-tag
+                      v-for="ch in channelList(row.channels)"
+                      :key="ch"
+                      size="small"
+                      effect="plain"
+                      :type="CHANNEL_META[ch]?.type || 'info'"
+                      style="margin-right: 4px"
+                    >
+                      {{ CHANNEL_META[ch]?.label || ch }}
+                    </el-tag>
+                    <span v-if="!channelList(row.channels).length" class="text-secondary">-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="启用" width="80" align="center">
+                  <template #default="{ row }">
+                    <el-switch
+                      v-model="row.isEnabled"
+                      :active-value="1"
+                      :inactive-value="0"
+                      @change="changeTemplateSwitch(row, 'isEnabled')"
+                    />
+                  </template>
+                </el-table-column>
+                <el-table-column label="自动触发" width="90" align="center">
+                  <template #default="{ row }">
+                    <el-switch
+                      v-model="row.autoTrigger"
+                      :active-value="1"
+                      :inactive-value="0"
+                      @change="changeTemplateSwitch(row, 'autoTrigger')"
+                    />
+                  </template>
+                </el-table-column>
+                <el-table-column label="短信模板码" width="130">
+                  <template #default="{ row }">{{ row.smsTemplateCode || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="150" fixed="right" align="center">
+                  <template #default="{ row }">
+                    <el-button link type="primary" size="small" @click="openTemplateDialog(row)">编辑</el-button>
+                    <el-button link type="success" size="small" @click="openTestTemplate(row)">测试发送</el-button>
+                  </template>
+                </el-table-column>
+                <template #empty><el-empty description="暂无消息模板" :image-size="80" /></template>
+              </el-table>
+
+              <div class="tpl-pager">
+                <el-pagination
+                  v-model:current-page="tplQuery.page"
+                  v-model:page-size="tplQuery.pageSize"
+                  :total="tplTotal"
+                  :page-sizes="[20, 50, 100]"
+                  layout="total, sizes, prev, pager, next, jumper"
+                  @current-change="loadTemplates"
+                  @size-change="searchTemplates"
+                />
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+
         <!-- 账号安全 -->
         <el-tab-pane label="账号安全" name="account">
           <div class="tab-body">
@@ -207,6 +495,77 @@
           </div>
         </el-tab-pane>
       </el-tabs>
+
+      <!-- 消息模板编辑 -->
+      <el-dialog
+        v-model="tplDialogVisible"
+        :title="tplForm.id ? '编辑消息模板' : '新建消息模板'"
+        width="700px"
+        :close-on-click-modal="false"
+      >
+        <el-form label-width="110px">
+          <el-form-item label="模板编码">
+            <el-input v-model="tplForm.code" :disabled="!!tplForm.id" placeholder="大写字母 / 数字 / 下划线，保存后不可修改" style="width: 320px" />
+          </el-form-item>
+          <el-form-item label="模板名称">
+            <el-input v-model="tplForm.name" placeholder="例如：注册成功通知" style="width: 320px" />
+          </el-form-item>
+          <el-form-item label="分类">
+            <el-select v-model="tplForm.category" filterable allow-create default-first-option placeholder="account / license / system" style="width: 200px">
+              <el-option label="账号" value="account" />
+              <el-option label="授权" value="license" />
+              <el-option label="系统" value="system" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="标题">
+            <el-input v-model="tplForm.title" placeholder="站内信 / 邮件 / 钉钉标题" style="width: 420px" />
+          </el-form-item>
+          <el-form-item label="正文">
+            <el-input v-model="tplForm.content" type="textarea" :rows="6" placeholder="支持占位符：{username} {email} {code} {minutes} {version} {expire_at} {days} {site_name} {time}" />
+          </el-form-item>
+          <el-form-item label="通知渠道">
+            <el-checkbox-group v-model="tplForm.channels">
+              <el-checkbox label="SYSTEM">站内信</el-checkbox>
+              <el-checkbox label="EMAIL">邮件</el-checkbox>
+              <el-checkbox label="SMS">短信</el-checkbox>
+              <el-checkbox label="DINGTALK">钉钉</el-checkbox>
+              <el-checkbox label="WECOM">企业微信</el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+          <el-form-item label="短信模板 CODE">
+            <el-input v-model="tplForm.sms_template_code" placeholder="SMS_xxxxxxxx（短信渠道必填）" style="width: 240px" />
+          </el-form-item>
+          <el-form-item label="启用">
+            <el-switch v-model="tplForm.is_enabled" :active-value="1" :inactive-value="0" />
+          </el-form-item>
+          <el-form-item label="自动触发">
+            <el-switch v-model="tplForm.auto_trigger" :active-value="1" :inactive-value="0" />
+            <span class="hint">关闭后业务事件只写站内信，不外发</span>
+          </el-form-item>
+          <el-form-item label="排序">
+            <el-input-number v-model="tplForm.sort_order" :min="0" :max="9999" />
+          </el-form-item>
+        </el-form>
+
+        <div v-if="tplTestResults.length" class="test-results">
+          <div class="test-results-title">测试结果</div>
+          <div v-for="item in tplTestResults" :key="item.channel" class="test-result-row">
+            <el-tag size="small" effect="plain" :type="CHANNEL_META[item.channel]?.type || 'info'">
+              {{ CHANNEL_META[item.channel]?.label || item.channel }}
+            </el-tag>
+            <el-tag size="small" :type="item.status === 'ok' ? 'success' : item.status === 'fail' ? 'danger' : 'info'">
+              {{ item.status === 'ok' ? '成功' : item.status === 'fail' ? '失败' : '跳过' }}
+            </el-tag>
+            <span class="test-result-text">{{ item.message }}</span>
+          </div>
+        </div>
+
+        <template #footer>
+          <el-button :disabled="!tplForm.id" :loading="tplTesting" @click="handleTestTemplate">测试发送</el-button>
+          <el-button @click="tplDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="tplSaving" @click="saveTemplate">保存</el-button>
+        </template>
+      </el-dialog>
     </el-card>
   </div>
 </template>
@@ -214,7 +573,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Check, RefreshLeft, Lock, Delete, Promotion, Timer } from '@element-plus/icons-vue'
+import { Check, RefreshLeft, Lock, Delete, Promotion, Timer, Search, Plus } from '@element-plus/icons-vue'
 import {
   getConfig,
   updateConfig,
@@ -230,6 +589,19 @@ import {
   type NoticeSendResult,
 } from '@/api/config'
 import { changePassword } from '@/api/users'
+import {
+  getNotifyConfig,
+  updateNotifyConfig,
+  testMail,
+  testSms,
+  testSmsConnection,
+  getTemplates,
+  createTemplate,
+  updateTemplate,
+  testTemplate,
+  type NotificationTemplateRow,
+  type NotifyChannelResult,
+} from '@/api/notify'
 import { useUserStore } from '@/stores/user'
 
 const activeTab = ref('policy')
@@ -506,6 +878,360 @@ async function handleCleanLogs() {
   }
 }
 
+// ============ 邮件发件 / 短信 / 通知渠道 ============
+const CATEGORY_LABELS: Record<string, string> = { account: '账号', license: '授权', system: '系统' }
+const CHANNEL_META: Record<string, { label: string; type: 'info' | 'success' | 'warning' | 'danger' }> = {
+  SYSTEM: { label: '站内信', type: 'info' },
+  EMAIL: { label: '邮件', type: 'success' },
+  SMS: { label: '短信', type: 'warning' },
+  DINGTALK: { label: '钉钉', type: 'danger' },
+  WECOM: { label: '企业微信', type: 'success' },
+}
+
+const mailForm = reactive({
+  smtp_host: '',
+  smtp_port: '465',
+  smtp_user: '',
+  smtp_pass: '',
+  smtp_from: '',
+  mail_from_name: 'eBox 授权服务',
+  mail_site_url: '',
+})
+const mailEnabled = ref(false)
+const smtpPassSet = ref(false)
+const mailSaving = ref(false)
+const mailTesting = ref(false)
+const mailTestTo = ref('')
+
+const smsForm = reactive({
+  sms_access_key_id: '',
+  sms_access_key_secret: '',
+  sms_sign_name: '',
+  sms_region: 'cn-hangzhou',
+  sms_tpl_verify_code: '',
+  sms_admin_phone: '',
+})
+const smsEnabled = ref(false)
+const smsSecretSet = ref(false)
+const smsSaving = ref(false)
+const smsTesting = ref(false)
+const smsConnTesting = ref(false)
+const smsTestPhone = ref('')
+
+const notifyForm = reactive({
+  notify_dingtalk_url: '',
+  notify_dingtalk_secret: '',
+  notify_wecom_url: '',
+  notify_email_to: '',
+  notify_sms_phone: '',
+})
+const notifyGlobalEnabled = ref(false)
+const dingtalkSecretSet = ref(false)
+const notifySaving = ref(false)
+
+async function loadNotifyConfig() {
+  try {
+    const data = await getNotifyConfig()
+    mailForm.smtp_host = data.smtp_host || ''
+    mailForm.smtp_port = data.smtp_port || '465'
+    mailForm.smtp_user = data.smtp_user || ''
+    mailForm.smtp_pass = ''
+    mailForm.smtp_from = data.smtp_from || ''
+    mailForm.mail_from_name = data.mail_from_name || 'eBox 授权服务'
+    mailForm.mail_site_url = data.mail_site_url || ''
+    mailEnabled.value = data.mail_enabled === '1'
+    smtpPassSet.value = data.smtp_pass === '__SET__'
+
+    smsForm.sms_access_key_id = data.sms_access_key_id || ''
+    smsForm.sms_access_key_secret = ''
+    smsForm.sms_sign_name = data.sms_sign_name || ''
+    smsForm.sms_region = data.sms_region || 'cn-hangzhou'
+    smsForm.sms_tpl_verify_code = data.sms_tpl_verify_code || ''
+    smsForm.sms_admin_phone = data.sms_admin_phone || ''
+    smsEnabled.value = data.sms_enabled === '1'
+    smsSecretSet.value = data.sms_access_key_secret === '__SET__'
+
+    notifyForm.notify_dingtalk_url = data.notify_dingtalk_url || ''
+    notifyForm.notify_dingtalk_secret = ''
+    notifyForm.notify_wecom_url = data.notify_wecom_url || ''
+    notifyForm.notify_email_to = data.notify_email_to || ''
+    notifyForm.notify_sms_phone = data.notify_sms_phone || ''
+    notifyGlobalEnabled.value = data.notify_global_enabled === '1'
+    dingtalkSecretSet.value = data.notify_dingtalk_secret === '__SET__'
+  } catch {
+    // 拦截器已提示
+  }
+}
+
+async function saveMailConfig() {
+  mailSaving.value = true
+  try {
+    await updateNotifyConfig({
+      mail_enabled: mailEnabled.value ? '1' : '0',
+      smtp_host: mailForm.smtp_host.trim(),
+      smtp_port: mailForm.smtp_port.trim() || '465',
+      smtp_user: mailForm.smtp_user.trim(),
+      smtp_pass: mailForm.smtp_pass,
+      smtp_from: mailForm.smtp_from.trim(),
+      mail_from_name: mailForm.mail_from_name.trim(),
+      mail_site_url: mailForm.mail_site_url.trim(),
+    })
+    ElMessage.success('邮件配置已保存')
+    await loadNotifyConfig()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    mailSaving.value = false
+  }
+}
+
+async function handleTestMail() {
+  const to = mailTestTo.value.trim()
+  if (!to) {
+    ElMessage.warning('请填写测试收件人邮箱')
+    return
+  }
+  mailTesting.value = true
+  try {
+    await testMail(to)
+    ElMessage.success('测试邮件已发送，请查收')
+  } catch {
+    // 拦截器已提示
+  } finally {
+    mailTesting.value = false
+  }
+}
+
+async function saveSmsConfig() {
+  smsSaving.value = true
+  try {
+    await updateNotifyConfig({
+      sms_enabled: smsEnabled.value ? '1' : '0',
+      sms_provider: 'aliyun',
+      sms_access_key_id: smsForm.sms_access_key_id.trim(),
+      sms_access_key_secret: smsForm.sms_access_key_secret,
+      sms_sign_name: smsForm.sms_sign_name.trim(),
+      sms_region: smsForm.sms_region,
+      sms_tpl_verify_code: smsForm.sms_tpl_verify_code.trim(),
+      sms_admin_phone: smsForm.sms_admin_phone.trim(),
+    })
+    ElMessage.success('短信配置已保存')
+    await loadNotifyConfig()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    smsSaving.value = false
+  }
+}
+
+async function handleTestSmsConnection() {
+  smsConnTesting.value = true
+  try {
+    const res = await testSmsConnection()
+    ElMessage.success(`阿里云连通正常（模板数 ${res.total}）`)
+  } catch {
+    // 拦截器已提示
+  } finally {
+    smsConnTesting.value = false
+  }
+}
+
+async function handleTestSms() {
+  const phone = smsTestPhone.value.trim()
+  if (!phone) {
+    ElMessage.warning('请填写测试手机号')
+    return
+  }
+  smsTesting.value = true
+  try {
+    await testSms({ phone, template_code: smsForm.sms_tpl_verify_code.trim() || undefined })
+    ElMessage.success('测试短信已提交，请查收')
+  } catch {
+    // 拦截器已提示
+  } finally {
+    smsTesting.value = false
+  }
+}
+
+async function saveNotifyConfig() {
+  notifySaving.value = true
+  try {
+    await updateNotifyConfig({
+      notify_global_enabled: notifyGlobalEnabled.value ? '1' : '0',
+      notify_dingtalk_url: notifyForm.notify_dingtalk_url.trim(),
+      notify_dingtalk_secret: notifyForm.notify_dingtalk_secret,
+      notify_wecom_url: notifyForm.notify_wecom_url.trim(),
+      notify_email_to: notifyForm.notify_email_to.trim(),
+      notify_sms_phone: notifyForm.notify_sms_phone.trim(),
+    })
+    ElMessage.success('通知渠道已保存')
+    await loadNotifyConfig()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    notifySaving.value = false
+  }
+}
+
+// ============ 消息模板 ============
+const tplQuery = reactive({ page: 1, pageSize: 20, keyword: '', category: '' })
+const tplList = ref<NotificationTemplateRow[]>([])
+const tplTotal = ref(0)
+const tplLoading = ref(false)
+
+const tplDialogVisible = ref(false)
+const tplSaving = ref(false)
+const tplTesting = ref(false)
+const tplTestResults = ref<NotifyChannelResult[]>([])
+const tplForm = reactive({
+  id: '',
+  code: '',
+  name: '',
+  category: 'account',
+  title: '',
+  content: '',
+  channels: ['SYSTEM'] as string[],
+  sms_template_code: '',
+  is_enabled: 1,
+  auto_trigger: 1,
+  sort_order: 0,
+})
+
+function channelList(raw: string): string[] {
+  return String(raw || '')
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean)
+}
+
+async function loadTemplates() {
+  tplLoading.value = true
+  try {
+    const res = await getTemplates({
+      page: tplQuery.page,
+      pageSize: tplQuery.pageSize,
+      keyword: tplQuery.keyword.trim(),
+      category: tplQuery.category,
+    })
+    tplList.value = res.list
+    tplTotal.value = res.total
+  } catch {
+    // 拦截器已提示
+  } finally {
+    tplLoading.value = false
+  }
+}
+
+function searchTemplates() {
+  tplQuery.page = 1
+  loadTemplates()
+}
+
+function resetTplForm() {
+  tplForm.id = ''
+  tplForm.code = ''
+  tplForm.name = ''
+  tplForm.category = 'account'
+  tplForm.title = ''
+  tplForm.content = ''
+  tplForm.channels = ['SYSTEM']
+  tplForm.sms_template_code = ''
+  tplForm.is_enabled = 1
+  tplForm.auto_trigger = 1
+  tplForm.sort_order = 0
+  tplTestResults.value = []
+}
+
+function openTemplateDialog(row?: NotificationTemplateRow) {
+  resetTplForm()
+  if (row) {
+    tplForm.id = row.id
+    tplForm.code = row.code
+    tplForm.name = row.name
+    tplForm.category = row.category || ''
+    tplForm.title = row.title || ''
+    tplForm.content = row.content || ''
+    tplForm.channels = channelList(row.channels)
+    tplForm.sms_template_code = row.smsTemplateCode || ''
+    tplForm.is_enabled = row.isEnabled
+    tplForm.auto_trigger = row.autoTrigger
+    tplForm.sort_order = row.sortOrder
+  }
+  tplDialogVisible.value = true
+}
+
+function openTestTemplate(row: NotificationTemplateRow) {
+  openTemplateDialog(row)
+  void handleTestTemplate()
+}
+
+async function handleTestTemplate() {
+  if (!tplForm.id) {
+    ElMessage.warning('请先保存模板后再测试发送')
+    return
+  }
+  tplTesting.value = true
+  tplTestResults.value = []
+  try {
+    const res = await testTemplate(tplForm.code)
+    tplTestResults.value = res.items
+  } catch {
+    // 拦截器已提示
+  } finally {
+    tplTesting.value = false
+  }
+}
+
+async function saveTemplate() {
+  if (!tplForm.id && !/^[A-Z0-9_]{2,64}$/.test(tplForm.code.trim())) {
+    ElMessage.warning('模板编码需为 2-64 位大写字母 / 数字 / 下划线')
+    return
+  }
+  if (!tplForm.name.trim()) {
+    ElMessage.warning('请填写模板名称')
+    return
+  }
+  tplSaving.value = true
+  try {
+    const payload = {
+      name: tplForm.name.trim(),
+      category: tplForm.category,
+      title: tplForm.title.trim(),
+      content: tplForm.content,
+      channels: tplForm.channels,
+      sms_template_code: tplForm.sms_template_code.trim(),
+      is_enabled: tplForm.is_enabled,
+      auto_trigger: tplForm.auto_trigger,
+      sort_order: tplForm.sort_order,
+    }
+    if (tplForm.id) {
+      await updateTemplate(tplForm.id, payload)
+      ElMessage.success('模板已保存')
+    } else {
+      await createTemplate({ ...payload, code: tplForm.code.trim().toUpperCase() })
+      ElMessage.success('模板已创建')
+    }
+    tplDialogVisible.value = false
+    await loadTemplates()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    tplSaving.value = false
+  }
+}
+
+async function changeTemplateSwitch(row: NotificationTemplateRow, field: 'isEnabled' | 'autoTrigger') {
+  try {
+    await updateTemplate(
+      row.id,
+      field === 'isEnabled' ? { is_enabled: row.isEnabled } : { auto_trigger: row.autoTrigger },
+    )
+    ElMessage.success('模板状态已更新')
+  } catch {
+    await loadTemplates()
+  }
+}
+
 // ============ 修改密码 ============
 const store = useUserStore()
 const pwdFormRef = ref<FormInstance>()
@@ -551,7 +1277,11 @@ async function submitPassword() {
   }
 }
 
-onMounted(loadPolicy)
+onMounted(() => {
+  loadPolicy()
+  loadNotifyConfig()
+  loadTemplates()
+})
 </script>
 
 <style scoped lang="scss">
@@ -701,6 +1431,103 @@ onMounted(loadPolicy)
     gap: 8px;
     flex-wrap: wrap;
     margin-top: 16px;
+  }
+
+  .form-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-width: 100%;
+  }
+
+  .grid-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .grid-label {
+    width: 128px;
+    flex: none;
+    font-size: 13px;
+    color: var(--text-main);
+  }
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: 10px;
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.sub-card {
+  box-sizing: border-box;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+  border: 1px solid #f0f2f7;
+  border-radius: 8px;
+  background: #fff;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+
+  .sub-title {
+    margin-bottom: 16px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-main);
+  }
+}
+
+.tpl-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.tpl-pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.test-results {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 12px;
+  border-radius: 6px;
+  background: #f7f8fc;
+
+  .test-results-title {
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+  }
+
+  .test-result-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  .test-result-text {
+    font-size: 12px;
+    color: var(--text-secondary);
+    word-break: break-all;
   }
 }
 </style>

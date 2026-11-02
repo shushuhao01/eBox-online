@@ -21,6 +21,31 @@ const DEFAULTS: Record<string, string> = {
   // 操作日志自动清理：保留天数（默认 1 天=24 小时），每日清理时间 HH:mm
   log_retention_days: '1',
   log_clean_time: '03:00',
+  // 邮件发件（smtp_* 与 app_configs 同名键并存，由 SmtpConfigService 统一读取）
+  mail_enabled: '0',
+  smtp_host: '',
+  smtp_port: '465',
+  smtp_user: '',
+  smtp_pass: '',
+  smtp_from: '',
+  mail_from_name: 'eBox 授权服务',
+  mail_site_url: '',
+  // 短信（阿里云）
+  sms_enabled: '0',
+  sms_provider: 'aliyun',
+  sms_access_key_id: '',
+  sms_access_key_secret: '',
+  sms_sign_name: '',
+  sms_region: 'cn-hangzhou',
+  sms_tpl_verify_code: '',
+  sms_admin_phone: '',
+  // 通知渠道
+  notify_dingtalk_url: '',
+  notify_dingtalk_secret: '',
+  notify_wecom_url: '',
+  notify_email_to: '',
+  notify_sms_phone: '',
+  notify_global_enabled: '0',
 };
 
 const repo = () => AppDataSource.getRepository(SystemConfig);

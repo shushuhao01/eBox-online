@@ -105,6 +105,7 @@ const menus = [
   { path: '/heartbeats', meta: { title: '心跳日志', icon: 'Timer' } },
   { path: '/agencies', meta: { title: '客户端代理商', icon: 'Shop' } },
   { path: '/site', meta: { title: '官网管理', icon: 'Platform' } },
+  { path: '/marketing', meta: { title: '营销管理', icon: 'Promotion' } },
   { path: '/settings', meta: { title: '系统设置', icon: 'Setting' } },
   { path: '/logs', meta: { title: '操作日志', icon: 'Document' } },
   { path: '/users', meta: { title: '管理员', icon: 'Lock', superOnly: true } },

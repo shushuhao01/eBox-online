@@ -39,6 +39,8 @@ import adminAccountRoutes from './routes/admin/accounts';
 import adminEnterpriseRoutes from './routes/admin/enterprises';
 import adminIpResourceRoutes from './routes/admin/ipResources';
 import adminMallRoutes from './routes/admin/mall';
+import adminNotifyRoutes from './routes/admin/notify';
+import adminMarketingRoutes from './routes/admin/marketing';
 import { markExpiredKeys } from './services/KeyService';
 import { getConfigValue, processScheduledNotice } from './services/ConfigService';
 import { cleanExpiredData } from './services/LogService';
@@ -47,6 +49,8 @@ import { cleanChannelClicks } from './services/ChannelService';
 import { cleanAgencyClicks, processScheduledAgencies } from './services/AgencyService';
 import { autoReleaseStaleResources } from './services/IpResourceService';
 import { markExpiredAccountLicenses } from './services/LicenseAccountService';
+import { scanExpiringLicenseNotifications } from './services/NotifyService';
+import { markOpened, processScheduledCampaigns } from './services/MarketingService';
 
 const app = express();
 const PORT = env.port;
@@ -147,6 +151,19 @@ app.get('/api/health', (_req, res) => {
 const uploadRoot = process.env.SITE_UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
 app.use('/api/uploads', express.static(uploadRoot, { maxAge: '7d', fallthrough: true }));
 
+// ==================== 营销邮件打开追踪（无需登录，返回 1x1 透明 GIF） ====================
+const OPEN_PIXEL_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+app.get('/api/marketing/open/:token', async (req, res) => {
+  try {
+    await markOpened(String(req.params.token || ''));
+  } catch {
+    /* 打开统计失败不影响像素返回 */
+  }
+  res.setHeader('Content-Type', 'image/gif');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(OPEN_PIXEL_GIF);
+});
+
 // ==================== 客户端接口（无需登录） ====================
 app.use(API_PREFIX, clientRoutes);
 
@@ -178,6 +195,8 @@ app.use(`${ADMIN_PREFIX}`, authRequired, adminCustomerRoutes);
 app.use(`${ADMIN_PREFIX}`, authRequired, adminDeviceRoutes);
 app.use(`${ADMIN_PREFIX}/stats`, authRequired, adminStatsRoutes);
 app.use(`${ADMIN_PREFIX}/config`, authRequired, adminConfigRoutes);
+app.use(`${ADMIN_PREFIX}/notify`, authRequired, adminNotifyRoutes);
+app.use(`${ADMIN_PREFIX}/marketing`, authRequired, adminMarketingRoutes);
 app.use(`${ADMIN_PREFIX}`, authRequired, adminLogRoutes);
 app.use(`${ADMIN_PREFIX}`, authRequired, adminBatchRoutes);
 app.use(`${ADMIN_PREFIX}/users`, authRequired, adminUserRoutes);
@@ -223,6 +242,12 @@ async function main() {
         }
       } catch (e) {
         log.error('账号到期标记失败', e);
+      }
+      try {
+        const sent = await scanExpiringLicenseNotifications(7);
+        if (sent > 0) log.info(`临期提醒：已发送 ${sent} 条`);
+      } catch (e) {
+        log.error('临期提醒失败', e);
       }
     });
 
@@ -270,6 +295,16 @@ async function main() {
         await processScheduledAgencies();
       } catch (e) {
         log.error('定时代理商推送失败', e);
+      }
+    });
+
+    // 定时任务：营销邮件定时发送（send_at 到点即发送）
+    cron.schedule('* * * * *', async () => {
+      try {
+        const n = await processScheduledCampaigns();
+        if (n > 0) log.info(`定时营销邮件：已发送 ${n} 个活动`);
+      } catch (e) {
+        log.error('定时营销邮件发送失败', e);
       }
     });
 

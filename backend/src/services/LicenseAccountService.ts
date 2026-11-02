@@ -15,6 +15,7 @@ import {
 import { recordAgreements } from './AccountService';
 import { openEnterpriseForActivation } from './EnterpriseService';
 import { writeOperationLog } from './LogService';
+import { sendTemplate } from './NotifyService';
 
 const keyRepo = () => AppDataSource.getRepository(LicenseKey);
 const skuRepo = () => AppDataSource.getRepository(Sku);
@@ -267,6 +268,14 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
 
   const freshAccount = (await AppDataSource.getRepository(Account).findOneBy({ id: account.id })) || account;
   const entitlements = await getEntitlements(freshAccount);
+  // 激活 / 续费 / 升级通知（失败不影响激活主流程）
+  const tierText = sku?.label || `${targetTier === 2 ? '企业版' : '个人版'}${targetLevel === 2 ? '高级' : '普通'}`;
+  const expireText = permanent ? '永久有效' : new Date(newExpireSec * 1000).toISOString().slice(0, 10);
+  void sendTemplate('LICENSE_ACTIVATED', {
+    username: freshAccount.nickname || freshAccount.login,
+    tier_text: tierText,
+    expire_at: expireText,
+  });
   return {
     entitlements,
     key: toKeySummary(key, key.id),

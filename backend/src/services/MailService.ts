@@ -17,6 +17,16 @@ export interface SmtpConfig {
   from: string;
 }
 
+export interface MailMessage {
+  to: string;
+  subject: string;
+  text: string;
+  /** 提供 html 时按 text/html 发送，否则保持纯文本 */
+  html?: string;
+  /** 发件人显示名（RFC 2047 编码），默认「eBox 授权服务」 */
+  fromName?: string;
+}
+
 interface SmtpResponse {
   code: number;
   text: string;
@@ -149,8 +159,8 @@ function dotStuff(body: string): string {
     .join('\r\n');
 }
 
-/** 发送纯文本邮件；任一环节失败抛错 */
-export async function sendMail(cfg: SmtpConfig, mail: { to: string; subject: string; text: string }): Promise<void> {
+/** 发送邮件（纯文本或 HTML）；任一环节失败抛错 */
+export async function sendMail(cfg: SmtpConfig, mail: MailMessage): Promise<void> {
   const socket = cfg.secure
     ? tls.connect({ host: cfg.host, port: cfg.port, servername: cfg.host, rejectUnauthorized: false })
     : net.connect({ host: cfg.host, port: cfg.port });
@@ -190,16 +200,17 @@ export async function sendMail(cfg: SmtpConfig, mail: { to: string; subject: str
     await conn.command(`RCPT TO:<${mail.to}>`, [250, 251]);
     await conn.command('DATA', [354]);
 
+    const html = !!mail.html;
     const headers = [
-      `From: ${encodeHeader('eBox 授权服务')} <${cfg.from}>`,
+      `From: ${encodeHeader(mail.fromName || 'eBox 授权服务')} <${cfg.from}>`,
       `To: <${mail.to}>`,
       `Subject: ${encodeHeader(mail.subject)}`,
       `Date: ${new Date().toUTCString()}`,
       'MIME-Version: 1.0',
-      'Content-Type: text/plain; charset=UTF-8',
+      `Content-Type: ${html ? 'text/html' : 'text/plain'}; charset=UTF-8`,
       'Content-Transfer-Encoding: 8bit',
     ].join('\r\n');
-    const payload = `${headers}\r\n\r\n${dotStuff(mail.text)}\r\n.\r\n`;
+    const payload = `${headers}\r\n\r\n${dotStuff(html ? mail.html! : mail.text)}\r\n.\r\n`;
     await conn.writeRaw(payload);
     try {
       await conn.command('QUIT', [221]);

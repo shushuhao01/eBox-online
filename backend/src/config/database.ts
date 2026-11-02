@@ -41,6 +41,10 @@ import { UpgradeCode } from '../entities/account/UpgradeCode';
 import { ProxyBlockEvent } from '../entities/account/ProxyBlockEvent';
 import { AgreementAcceptance } from '../entities/account/AgreementAcceptance';
 import { AppConfig } from '../entities/account/AppConfig';
+import { NotificationTemplate } from '../entities/account/NotificationTemplate';
+import { SystemMessage } from '../entities/account/SystemMessage';
+import { MarketingCampaign } from '../entities/account/MarketingCampaign';
+import { MarketingRecipient } from '../entities/account/MarketingRecipient';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -63,6 +67,8 @@ export const AppDataSource = new DataSource({
     IpResource, IpAssignment, IpPoolSetting,
     SeatAddon, UpgradeCode, ProxyBlockEvent,
     AgreementAcceptance, AppConfig,
+    NotificationTemplate, SystemMessage,
+    MarketingCampaign, MarketingRecipient,
   ],
   synchronize: false, // 表结构由 database/schema.sql 管理，禁止自动同步
   logging: false,
