@@ -518,6 +518,83 @@ export async function clientUnbind(
   return { online: true, newCode, unbindCount: used + 1, unbindMax: key.unbindMax };
 }
 
+/**
+ * 账号登录换机记账：账号在「新机器」登录时，把该账号生效绑定卡密上其余仍处于绑定状态的
+ * 设备解绑，并按整条换机链扣减本月解绑次数（与客户端主动解绑共用同一份 unbind_logs 计数）。
+ *
+ * 老机器是否主动退出、是否在线都不影响：只要卡密仍绑在旧机器上，就消耗一次解绑机会，
+ * 这样用户无需先在旧机器解绑即可在新机器登录并激活。同一台机器（相同指纹）登录不扣次数。
+ *
+ * 返回 null 表示无需处理（未绑定卡密 / 非绑定码 / 企业席位模式）；
+ * 返回 unboundFps 供调用方把对应账号会话吊销并实时推送下线。
+ * 解绑次数用尽时抛 ApiError，登录接口会把 message 原样返回给登录页展示。
+ */
+export async function consumeUnbindForAccountLogin(
+  accountId: string,
+  excludeMachineFps: string[],
+  opts: { ip?: string; appVersion?: string } = {}
+): Promise<{ used: number; max: number; unboundFps: string[] } | null> {
+  const excluded = new Set(
+    excludeMachineFps.map((fp) => String(fp || '').trim()).filter(Boolean)
+  );
+  const key = await keyRepo()
+    .createQueryBuilder('k')
+    .where('k.account_id = :accountId', { accountId })
+    .andWhere('k.status = 1')
+    .orderBy('k.activated_at', 'DESC')
+    .limit(1)
+    .getOne();
+  if (!key || key.bound !== 1 || key.enterpriseId) return null;
+
+  // 卡密上仍绑定的其他设备（与旧机器是否在线无关）
+  const victims = (await deviceRepo().findBy({ keyId: key.id, status: 1 })).filter(
+    (d) => !excluded.has(d.machineFp)
+  );
+  if (victims.length === 0) return { used: 0, max: key.unbindMax, unboundFps: [] };
+
+  const month = monthKey();
+  const chainIds = await collectAncestorKeyIds(key);
+  const used = await unbindRepo()
+    .createQueryBuilder('u')
+    .where('u.month = :month', { month })
+    .andWhere('u.keyId IN (:...ids)', { ids: chainIds })
+    .getCount();
+  if (key.unbindMax === 0) {
+    throw new ApiError('该卡密已关闭解绑，无法在新设备登录，请联系客服', 1005);
+  }
+  if (key.unbindMax !== -1 && used + victims.length > key.unbindMax) {
+    throw new ApiError(
+      `本月解绑次数已用尽（已用 ${used}/${key.unbindMax} 次），请下月再试或联系客服增加次数`,
+      1005
+    );
+  }
+
+  const now = new Date();
+  const serverTime = nowSec();
+  for (const device of victims) {
+    device.status = 0;
+    device.unbindAt = now;
+    await deviceRepo().save(device);
+    await unbindRepo().save(unbindRepo().create({ keyId: key.id, deviceId: device.id, month }));
+    await hbRepo().save(
+      hbRepo().create({
+        keyId: key.id,
+        deviceId: device.id,
+        action: 3,
+        clientTime: String(serverTime),
+        ip: opts.ip || null,
+        appVersion: opts.appVersion || null,
+        detail: '账号在新设备登录，自动解绑旧设备（扣减本月解绑次数）',
+      })
+    );
+  }
+  return {
+    used: used + victims.length,
+    max: key.unbindMax,
+    unboundFps: victims.map((d) => d.machineFp),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 面板：作废 / 恢复 / 服务端签发换机码
 // ---------------------------------------------------------------------------

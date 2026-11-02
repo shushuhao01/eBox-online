@@ -20,6 +20,8 @@ import {
 import { loadSmtpConfig } from './SmtpConfigService';
 import { sendTemplate, sendTemplateToEmail } from './NotifyService';
 import { isValidMainlandPhone } from './AliyunSmsService';
+import { consumeUnbindForAccountLogin } from './KeyService';
+import { pushKick } from './AccountEventService';
 
 const accountRepo = () => AppDataSource.getRepository(Account);
 const sessionRepo = () => AppDataSource.getRepository(AccountSession);
@@ -240,19 +242,58 @@ async function resolveSeatLimit(account: Account): Promise<number> {
   return key?.seats || 0;
 }
 
-async function assertDeviceSlot(account: Account, deviceFp?: string): Promise<void> {
-  const limit = await resolveSeatLimit(account);
-  if (!limit || limit <= 0) return;
-  const since = new Date(Date.now() - ONLINE_DEVICE_WINDOW_MINUTES * 60 * 1000);
-  const qb = deviceRepo()
-    .createQueryBuilder('d')
-    .where('d.account_id = :accountId', { accountId: account.id })
-    .andWhere('d.status = 1')
-    .andWhere('d.last_active_at >= :since', { since });
-  if (deviceFp) qb.andWhere('d.machine_fp <> :fp', { fp: deviceFp });
-  const online = await qb.getCount();
-  if (online >= limit) {
-    throw new ApiError('在线设备已达席位上限，请在个人中心移除设备或购买席位', 1005);
+/**
+ * 登录占位：
+ * - 个人账号：按卡密绑定的设备换机——新机器登录时自动解绑旧机器（旧机器是否退出/在线都不影响），
+ *   并扣减本月解绑次数；同一台机器重复登录不扣次数。次数用尽时抛错，登录页直接展示提示文案。
+ * - 企业账号：按购买席位管理（在线设备超席位时踢最久未活跃的），不占解绑额度。
+ */
+async function claimDeviceSlot(account: Account, input: LoginInput): Promise<void> {
+  const fp = String(input.deviceFp || '').trim();
+  const kickFps = new Set<string>();
+
+  if (account.enterpriseId) {
+    const limit = await resolveSeatLimit(account);
+    const since = new Date(Date.now() - ONLINE_DEVICE_WINDOW_MINUTES * 60 * 1000);
+    const qb = deviceRepo()
+      .createQueryBuilder('d')
+      .where('d.account_id = :accountId', { accountId: account.id })
+      .andWhere('d.status = 1')
+      .andWhere('d.last_active_at >= :since', { since });
+    if (fp) qb.andWhere('d.machine_fp <> :fp', { fp });
+    const others = await qb.orderBy('d.last_active_at', 'ASC').getMany();
+    const excess = limit > 0 ? others.length - limit + 1 : 0;
+    if (excess > 0) others.slice(0, excess).forEach((d) => kickFps.add(d.machineFp));
+  } else {
+    // 个人账号：以卡密设备绑定为准，换机即扣一次本月解绑额度
+    const res = await consumeUnbindForAccountLogin(account.id, fp ? [fp] : [], {
+      ip: input.ip,
+      appVersion: input.appVersion,
+    });
+    res?.unboundFps.forEach((f) => kickFps.add(f));
+  }
+
+  if (kickFps.size === 0) return;
+
+  const now = new Date();
+  for (const victimFp of kickFps) {
+    await deviceRepo()
+      .createQueryBuilder()
+      .update(AccountDevice)
+      .set({ status: 0 })
+      .where('account_id = :accountId', { accountId: account.id })
+      .andWhere('machine_fp = :fp', { fp: victimFp })
+      .andWhere('status = 1')
+      .execute();
+    await sessionRepo()
+      .createQueryBuilder()
+      .update(AccountSession)
+      .set({ revokedAt: now })
+      .where('account_id = :accountId', { accountId: account.id })
+      .andWhere('machine_fp = :fp', { fp: victimFp })
+      .andWhere('revoked_at IS NULL')
+      .execute();
+    pushKick(account.id, '您的账号已在新设备登录，本机已自动下线', victimFp);
   }
 }
 
@@ -327,7 +368,7 @@ export async function loginAccount(input: LoginInput): Promise<LoginResult> {
     throw invalid;
   }
 
-  await assertDeviceSlot(account, input.deviceFp);
+  await claimDeviceSlot(account, input);
 
   account.lockCount = 0;
   account.lockedUntil = null;
