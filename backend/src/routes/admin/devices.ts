@@ -7,6 +7,7 @@ import { ok, fail, clientIp } from '../../middleware/helpers';
 import { ApiError } from '../../middleware/errorHandler';
 import { getOnlineWindowMinutes } from '../../services/ConfigService';
 import { writeOperationLog } from '../../services/LogService';
+import { kickKeyDevices } from '../../services/AccountEventService';
 
 const router = Router();
 const repo = () => AppDataSource.getRepository(Device);
@@ -54,6 +55,8 @@ router.post('/devices/:id/kick', async (req, res) => {
     device.status = 2;
     await repo().save(device);
     const key = device.keyId ? await AppDataSource.getRepository(LicenseKey).findOneBy({ id: device.keyId }) : null;
+    // 实时推送下线：按机器指纹精确投递到该设备
+    await kickKeyDevices(key, '您的设备已被管理员踢下线', device.machineFp || undefined);
     await writeOperationLog(
       req.auth!.userId,
       '踢下线',

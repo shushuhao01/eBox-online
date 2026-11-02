@@ -3,9 +3,12 @@ import Joi from 'joi';
 import { ok, fail, clientIp } from '../middleware/helpers';
 import { ApiError } from '../middleware/errorHandler';
 import { requireAccount } from '../middleware/accountAuth';
+import { AppDataSource } from '../config/database';
+import { Account } from '../entities/account/Account';
 import {
   registerAccount,
   loginAccount,
+  isPhoneTaken,
   revokeSession,
   getProfile,
   listDevices,
@@ -25,13 +28,18 @@ import { reportProxyBlocked } from '../services/ProxyBlockService';
 import { getAccountSummary, getAccountTrend } from '../services/TeamDashboardService';
 import { buildClientConfig } from '../services/SkuService';
 import { redeemUpgradeCode } from '../services/VoucherService';
+import { getConfigValue } from '../services/ConfigService';
+import {
+  isSmsEnabled,
+  isValidMainlandPhone,
+  loadAliyunSmsConfig,
+  sendSms,
+} from '../services/AliyunSmsService';
 import {
   addAccountClient,
   removeAccountClient,
   pushEntitlementsForAccountId,
 } from '../services/AccountEventService';
-import type { Account } from '../entities/account/Account';
-
 const router = Router();
 
 /** 登录/资料接口统一附带：权益 + 当前生效卡密 */
@@ -127,6 +135,85 @@ router.get('/account/profile', requireAccount, async (req, res) => {
       entitlementPayload(auth.account),
     ]);
     ok(res, { ...profile, ...extra });
+  } catch (e) {
+    if (e instanceof ApiError) return fail(res, e.message, e.code);
+    throw e;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 手机号绑定（不强制；绑定后可用 手机号/用户名/邮箱 任一登录）
+// ---------------------------------------------------------------------------
+const PHONE_CODE_TTL_MS = 5 * 60 * 1000;
+const PHONE_CODE_COOLDOWN_MS = 60 * 1000;
+const phoneCodes = new Map<string, { code: string; expiresAt: number; sentAt: number; attempts: number }>();
+
+function genPhoneCode(): string {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+// POST /api/v1/account/phone/send-code
+router.post('/account/phone/send-code', requireAccount, async (req, res) => {
+  try {
+    const { error, value } = Joi.object({ phone: Joi.string().trim().required().max(32) }).validate(req.body);
+    if (error) return fail(res, `参数错误：${error.message}`, 400);
+    const phone = String(value.phone);
+    if (!isValidMainlandPhone(phone)) return fail(res, '手机号格式不正确', 400);
+    if (await isPhoneTaken(phone, req.accountAuth!.account.id)) {
+      return fail(res, '该手机号已绑定其他账号', 400);
+    }
+
+    const now = Date.now();
+    const existing = phoneCodes.get(phone);
+    if (existing && now - existing.sentAt < PHONE_CODE_COOLDOWN_MS) {
+      const wait = Math.ceil((PHONE_CODE_COOLDOWN_MS - (now - existing.sentAt)) / 1000);
+      return fail(res, `请 ${wait} 秒后再获取验证码`, 429);
+    }
+    if (!(await isSmsEnabled())) return fail(res, '短信服务未启用，请联系管理员', 400);
+    const smsConfig = await loadAliyunSmsConfig();
+    if (!smsConfig) return fail(res, '短信服务未配置', 400);
+    const signName = (await getConfigValue('sms_sign_name')).trim();
+    const templateCode = (await getConfigValue('sms_tpl_verify_code')).trim();
+    if (!signName || !templateCode) return fail(res, '短信签名或模板未配置', 400);
+
+    const code = genPhoneCode();
+    await sendSms(smsConfig, { phone, signName, templateCode, templateParam: { code } });
+    phoneCodes.set(phone, { code, expiresAt: now + PHONE_CODE_TTL_MS, sentAt: now, attempts: 0 });
+    ok(res, { sent: true, cooldown: PHONE_CODE_COOLDOWN_MS / 1000 });
+  } catch (e) {
+    if (e instanceof ApiError) return fail(res, e.message, e.code);
+    return fail(res, e instanceof Error ? e.message : '验证码发送失败', 400);
+  }
+});
+
+// POST /api/v1/account/phone/bind
+router.post('/account/phone/bind', requireAccount, async (req, res) => {
+  try {
+    const auth = req.accountAuth!;
+    const { error, value } = Joi.object({
+      phone: Joi.string().trim().required().max(32),
+      code: Joi.string().trim().required().length(6),
+    }).validate(req.body);
+    if (error) return fail(res, `参数错误：${error.message}`, 400);
+    const phone = String(value.phone);
+    if (!isValidMainlandPhone(phone)) return fail(res, '手机号格式不正确', 400);
+    if (await isPhoneTaken(phone, auth.account.id)) return fail(res, '该手机号已绑定其他账号', 400);
+
+    const entry = phoneCodes.get(phone);
+    if (!entry || entry.expiresAt <= Date.now()) return fail(res, '验证码已过期，请重新获取', 400);
+    if (entry.attempts >= 5) {
+      phoneCodes.delete(phone);
+      return fail(res, '验证码错误次数过多，请重新获取', 400);
+    }
+    if (entry.code !== String(value.code)) {
+      entry.attempts += 1;
+      return fail(res, '验证码不正确', 400);
+    }
+
+    auth.account.phone = phone;
+    await AppDataSource.getRepository(Account).save(auth.account);
+    phoneCodes.delete(phone);
+    ok(res, await getProfile(auth.account), '手机号绑定成功');
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);
     throw e;
@@ -328,8 +415,9 @@ router.get('/account/keys', requireAccount, async (req, res) => {
 
 // GET /api/v1/account/events（SSE：权益变更实时推送）
 //   鉴权：Authorization: Bearer <token>
-//   事件：event: account.entitlements / data: { type, entitlements }
-//   连上即下发当前权益快照，之后仅在权益变更时推送；每 25s 发送 ": ping" 保活。
+//   事件：event: account.entitlements / account.kicked / config
+//   连上即下发当前权益快照，之后仅在权益变更/强制下线时推送；每 25s 发送 ": ping" 保活。
+//   可选 ?machineFp=xxx：设备管理踢下线时按机器指纹精确投递。
 router.get('/account/events', requireAccount, async (req, res) => {
   try {
     const auth = req.accountAuth!;
@@ -342,7 +430,7 @@ router.get('/account/events', requireAccount, async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
 
-    addAccountClient(auth.account.id, res, entitlements);
+    addAccountClient(auth.account.id, res, entitlements, String(req.query.machineFp || ''));
     const cleanup = () => removeAccountClient(auth.account.id, res);
     req.on('close', cleanup);
     req.on('error', cleanup);

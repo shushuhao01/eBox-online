@@ -21,7 +21,7 @@ import {
   listSeatAddons,
   voidSeatAddon,
 } from '../../services/VoucherService';
-import { broadcastConfig } from '../../services/AccountEventService';
+import { broadcastConfig, refreshAllEntitlements } from '../../services/AccountEventService';
 
 const router = Router();
 
@@ -78,6 +78,8 @@ router.put('/skus/:id', async (req, res) => {
   try {
     const row = await updateSku(String(req.params.id), value);
     await writeOperationLog(req.auth!.userId, '修改套餐', '套餐与档位', JSON.stringify(value), clientIp(req));
+    // caps（如 maxEnvs 环境上限）变化后，立即刷新在线账号权益，客户端无需重登
+    if (value.capsJson !== undefined) await refreshAllEntitlements();
     ok(res, row);
   } catch (e) {
     if (sendError(res, e)) return;
@@ -159,7 +161,9 @@ router.post('/push-config', async (req, res) => {
 // ==================== 升级码 ====================
 
 const upgradeCodeSchema = Joi.object({
-  toSkuId: Joi.alternatives().try(Joi.string(), Joi.number()).required(),
+  // 新模型：只按时长档位生成（同档位普通 → 高级）
+  duration: Joi.string().valid('month', 'quarter', 'year', 'permanent').optional(),
+  toSkuId: Joi.alternatives().try(Joi.string(), Joi.number()).optional(),
   fromSkuId: Joi.alternatives().try(Joi.string(), Joi.number()).allow(null, '').optional(),
   accountId: Joi.alternatives().try(Joi.string(), Joi.number()).allow(null, '').optional(),
   amount: Joi.number().min(0).max(1000000).allow(null).optional(),
@@ -186,9 +190,11 @@ router.get('/upgrade-codes', async (req, res) => {
 router.post('/upgrade-codes', async (req, res) => {
   const { error, value } = upgradeCodeSchema.validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
+  if (!value.duration && !value.toSkuId) return fail(res, '请选择升级档位（月/季/年/永久）', 400);
   try {
     const rows = await createUpgradeCodes({
-      toSkuId: String(value.toSkuId),
+      duration: value.duration || null,
+      toSkuId: value.toSkuId ? String(value.toSkuId) : null,
       fromSkuId: value.fromSkuId ? String(value.fromSkuId) : null,
       accountId: value.accountId ? String(value.accountId) : null,
       amount: value.amount ?? null,
@@ -201,7 +207,7 @@ router.post('/upgrade-codes', async (req, res) => {
       req.auth!.userId,
       '生成升级码',
       '套餐与档位',
-      JSON.stringify({ toSkuId: value.toSkuId, count: rows.length, accountId: value.accountId || null }),
+      JSON.stringify({ duration: value.duration || null, toSkuId: value.toSkuId || null, count: rows.length, accountId: value.accountId || null }),
       clientIp(req)
     );
     ok(res, rows);

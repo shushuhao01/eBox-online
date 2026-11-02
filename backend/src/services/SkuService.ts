@@ -23,6 +23,7 @@ export interface SkuView {
   label: string;
   seats: number;
   mallUrl: string | null;
+  capsJson: string | null;
   enabled: boolean;
   sort: number;
 }
@@ -58,6 +59,7 @@ export function toSkuView(sku: Sku): SkuView {
     label: sku.label,
     seats: sku.seats,
     mallUrl: sku.mallUrl || null,
+    capsJson: sku.capsJson ?? null,
     enabled: sku.enabled === 1,
     sort: sku.sort,
   };

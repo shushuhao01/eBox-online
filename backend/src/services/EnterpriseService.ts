@@ -320,7 +320,7 @@ export async function updateTeamMember(
   ctx: EnterpriseContext,
   memberId: string,
   input: { nickname?: string; hint?: string; remark?: string; status?: number; ip?: string }
-): Promise<void> {
+): Promise<{ accountId: string; disabled: boolean }> {
   const member = await getMemberOf(ctx, memberId);
   if (member.role === 1) throw new ApiError('不能修改企业管理员资料', 4005);
   const account = await accountRepo().findOneBy({ id: member.accountId });
@@ -338,6 +338,7 @@ export async function updateTeamMember(
   await accountRepo().save(account);
   await memberRepo().save(member);
   await writeOperationLog(admin.id, 'team.member.update', account.login, '更新成员资料', input.ip || '');
+  return { accountId: account.id, disabled: input.status === 2 };
 }
 
 async function revokeMemberSessions(accountId: string): Promise<void> {
@@ -354,7 +355,7 @@ export async function resetTeamMemberPassword(
   ctx: EnterpriseContext,
   memberId: string,
   ip?: string
-): Promise<{ login: string; password: string }> {
+): Promise<{ login: string; password: string; accountId: string }> {
   const member = await getMemberOf(ctx, memberId);
   const account = await accountRepo().findOneBy({ id: member.accountId });
   if (!account) throw new ApiError('成员账号不存在', 4004);
@@ -366,7 +367,7 @@ export async function resetTeamMemberPassword(
   await accountRepo().save(account);
   await revokeMemberSessions(account.id);
   await writeOperationLog(admin.id, 'team.member.reset_password', account.login, '重置成员密码并吊销会话', ip || '');
-  return { login: account.login, password };
+  return { login: account.login, password, accountId: account.id };
 }
 
 export async function unlockTeamMember(
@@ -390,7 +391,7 @@ export async function deleteTeamMember(
   ctx: EnterpriseContext,
   memberId: string,
   ip?: string
-): Promise<void> {
+): Promise<{ accountId: string; disabled: true }> {
   const member = await getMemberOf(ctx, memberId);
   if (member.role === 1) throw new ApiError('企业管理员不可删除', 4005);
 
@@ -443,6 +444,7 @@ export async function deleteTeamMember(
   }
   await revokeMemberSessions(member.accountId);
   await writeOperationLog(admin.id, 'team.member.delete', account?.login || member.accountId, '删除成员并释放席位', ip || '');
+  return { accountId: member.accountId, disabled: true };
 }
 
 /** 企业信息（客户端团队面板展示） */

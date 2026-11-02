@@ -19,6 +19,7 @@ import {
 } from '../utils/accountCrypto';
 import { loadSmtpConfig } from './SmtpConfigService';
 import { sendTemplate, sendTemplateToEmail } from './NotifyService';
+import { isValidMainlandPhone } from './AliyunSmsService';
 
 const accountRepo = () => AppDataSource.getRepository(Account);
 const sessionRepo = () => AppDataSource.getRepository(AccountSession);
@@ -33,6 +34,13 @@ export const SESSION_DAYS = 30;
 export const MAX_LOGIN_FAILS = 5;
 export const LOCK_MINUTES = 10;
 const ONLINE_DEVICE_WINDOW_MINUTES = 30;
+
+/** 手机号脱敏：138****1234 */
+function maskPhone(phone: string): string {
+  const p = String(phone || '').trim();
+  if (p.length < 7) return p;
+  return `${p.slice(0, 3)}****${p.slice(-4)}`;
+}
 
 export type AgreementType = 'user_agreement' | 'privacy_policy' | 'disclaimer';
 
@@ -248,9 +256,34 @@ async function assertDeviceSlot(account: Account, deviceFp?: string): Promise<vo
   }
 }
 
+/** 按 用户名 / 邮箱 / 手机号 定位账号（登录统一入口）。 */
+async function findAccountByIdentifier(identifier: string): Promise<Account | null> {
+  const account = await accountRepo().findOneBy({ login: identifier });
+  if (account) return account;
+  if (identifier.includes('@')) {
+    const byEmail = await accountRepo()
+      .createQueryBuilder('a')
+      .where('LOWER(a.email) = :email', { email: identifier.toLowerCase() })
+      .getOne();
+    if (byEmail) return byEmail;
+  }
+  if (isValidMainlandPhone(identifier)) {
+    const byPhone = await accountRepo().findOneBy({ phone: identifier });
+    if (byPhone) return byPhone;
+  }
+  return null;
+}
+
+/** 手机号是否已被其他账号占用。 */
+export async function isPhoneTaken(phone: string, exceptAccountId?: string): Promise<boolean> {
+  const found = await accountRepo().findOneBy({ phone });
+  if (!found) return false;
+  return String(found.id) !== String(exceptAccountId || '');
+}
+
 export async function loginAccount(input: LoginInput): Promise<LoginResult> {
   const login = normalizeLogin(input.login);
-  const account = await accountRepo().findOneBy({ login });
+  const account = await findAccountByIdentifier(login);
   // 统一文案防枚举
   const invalid = new ApiError('账号或密码错误', 1001);
 
@@ -391,6 +424,7 @@ export interface ProfilePayload {
   loginMasked: string;
   nickname: string | null;
   email: string | null;
+  phoneMasked: string | null;
   role: number;
   status: number;
   everEnterprise: boolean;
@@ -424,6 +458,7 @@ export async function getProfile(account: Account): Promise<ProfilePayload> {
     loginMasked: maskLogin(account.login),
     nickname: account.nickname,
     email: account.email ? maskLogin(account.email) : null,
+    phoneMasked: account.phone ? maskPhone(account.phone) : null,
     role,
     status: account.status,
     everEnterprise: account.everEnterprise === 1,

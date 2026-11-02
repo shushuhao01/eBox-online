@@ -10,6 +10,7 @@ export interface SkuItem {
   label: string
   seats: number
   mallUrl: string | null
+  capsJson: string | null
   enabled: boolean
   sort: number
 }
@@ -41,6 +42,7 @@ export interface UpgradeCodeRow {
   code: string
   toSkuCode: string | null
   toSkuLabel: string | null
+  toDuration: string | null
   accountId: string | null
   amount: string | null
   remark: string | null
@@ -104,7 +106,8 @@ export function getUpgradeCodes(params: {
 }
 
 export function createUpgradeCodes(data: {
-  toSkuId: string
+  duration: string
+  toSkuId?: string | null
   fromSkuId?: string | null
   accountId?: string | null
   remark?: string

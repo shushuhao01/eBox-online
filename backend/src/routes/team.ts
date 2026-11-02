@@ -15,6 +15,7 @@ import {
 import { assignResources, listEnterprisePool, recycleResource } from '../services/IpResourceService';
 import { getTeamSummary, getTeamTrend } from '../services/TeamDashboardService';
 import { listEnterpriseSeatAddons, redeemSeatAddon } from '../services/VoucherService';
+import { pushKick } from '../services/AccountEventService';
 
 const router = Router();
 
@@ -99,10 +100,11 @@ router.patch('/team/members/:id', async (req, res) => {
   try {
     const { error, value } = updateSchema.validate(req.body);
     if (error) throw new ApiError(`参数错误：${error.message}`, 400, 400);
-    await updateTeamMember(req.accountAuth!.account, req.enterpriseAuth!, String(req.params.id), {
+    const result = await updateTeamMember(req.accountAuth!.account, req.enterpriseAuth!, String(req.params.id), {
       ...value,
       ip: clientIp(req),
     });
+    if (result.disabled) pushKick(result.accountId, '您的账号已被企业管理员停用');
     ok(res, null, '成员资料已更新');
   } catch (e) {
     if (sendError(res, e)) return;
@@ -119,6 +121,7 @@ router.post('/team/members/:id/reset-password', async (req, res) => {
       String(req.params.id),
       clientIp(req)
     );
+    pushKick(result.accountId, '账号密码已被管理员重置，请重新登录');
     ok(res, result, '密码已重置，请立即保存并告知成员');
   } catch (e) {
     if (sendError(res, e)) return;
@@ -145,12 +148,13 @@ router.post('/team/members/:id/unlock', async (req, res) => {
 // DELETE /api/team/members/:id（释放席位；占用中的资源返回清单并拒绝）
 router.delete('/team/members/:id', async (req, res) => {
   try {
-    await deleteTeamMember(
+    const result = await deleteTeamMember(
       req.accountAuth!.account,
       req.enterpriseAuth!,
       String(req.params.id),
       clientIp(req)
     );
+    pushKick(result.accountId, '您的账号已被企业管理员移除');
     ok(res, null, '成员已删除，席位已释放');
   } catch (e) {
     if (sendError(res, e)) return;

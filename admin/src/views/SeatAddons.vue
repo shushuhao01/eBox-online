@@ -44,8 +44,8 @@
             <el-table-column label="升级到" min-width="180">
               <template #default="{ row }">
                 <div class="tier-cell">
-                  <span>{{ row.toSkuLabel || '-' }}</span>
-                  <span v-if="row.toSkuCode" class="code-font text-secondary">{{ row.toSkuCode }}</span>
+                  <span>{{ DURATION_TEXT[row.toDuration || ''] || row.toSkuLabel || '-' }} · 普通升级高级</span>
+                  <span class="code-font text-secondary">{{ row.toSkuCode || '' }}</span>
                 </div>
               </template>
             </el-table-column>
@@ -94,20 +94,14 @@
         <!-- 生成升级码 -->
         <el-dialog v-model="upgradeGenVisible" title="生成升级码" width="580px" :close-on-click-modal="false">
           <el-form ref="upgradeGenFormRef" :model="upgradeGenForm" :rules="upgradeGenRules" label-width="110px">
-            <el-form-item label="升级到" prop="toSkuId">
-              <el-select v-model="upgradeGenForm.toSkuId" filterable placeholder="选择目标档位" style="width: 100%">
-                <el-option v-for="s in skuOptions" :key="s.id" :label="skuText(s)" :value="s.id" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="当前档位">
-              <el-select
-                v-model="upgradeGenForm.fromSkuId"
-                filterable
-                clearable
-                placeholder="可选：限定从某档位升级"
-                style="width: 100%"
-              >
-                <el-option v-for="s in skuOptions" :key="s.id" :label="skuText(s)" :value="s.id" />
+            <el-form-item label="档位时长" prop="duration">
+              <el-select v-model="upgradeGenForm.duration" placeholder="选择升级码档位时长" style="width: 100%">
+                <el-option
+                  v-for="d in UPGRADE_DURATIONS"
+                  :key="d.key"
+                  :label="`${d.label} · 普通升级高级`"
+                  :value="d.key"
+                />
               </el-select>
             </el-form-item>
             <el-form-item label="指定账号ID">
@@ -129,6 +123,9 @@
               <el-input v-model="upgradeGenForm.remark" placeholder="备注（可选）" maxlength="255" style="width: 320px" />
             </el-form-item>
           </el-form>
+          <div class="text-secondary">
+            升级码只把「同一档位时长」的普通版升级为高级版（个人/企业均可），核销后到期时间不变。
+          </div>
           <template #footer>
             <el-button @click="upgradeGenVisible = false">取消</el-button>
             <el-button type="primary" :loading="upgradeGenerating" @click="submitUpgradeGenerate">生成</el-button>
@@ -298,7 +295,7 @@
             <span class="text-secondary">保存后立即推送到在线客户端，无需重启</span>
           </div>
           <el-form label-width="150px" style="max-width: 760px">
-            <el-form-item v-for="g in UPGRADE_GROUPS" :key="g.key" :label="g.label">
+            <el-form-item v-for="g in UPGRADE_DURATIONS" :key="g.key" :label="`${g.label} · 普通升级高级`">
               <el-input
                 v-model="upgradeUrls[g.key]"
                 placeholder="https://mall.example.com/upgrade"
@@ -321,7 +318,8 @@
             </el-form-item>
           </el-form>
           <div class="text-secondary" style="margin-bottom: 12px">
-            4 个档位分别对应客户端升级弹窗「升级码」入口的商品详情页；同一档位不同时长共用此链接，留空则该档位不跳转。
+            客户端只对「普通版」卡密显示升级入口，可升级目标为同档位的高档位（高级版）；此处按 4 个档位时长下发商品页链接，
+            个人/企业普通用户按自己卡密的时长匹配，留空则该档位不显示升级入口。
           </div>
           <el-button type="primary" :icon="Check" :loading="savingMall" @click="saveMallLink">保存并推送</el-button>
         </div>
@@ -331,7 +329,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Search, Refresh, Plus, CopyDocument, Check } from '@element-plus/icons-vue'
 import TimeCell from '@/components/TimeCell.vue'
@@ -361,46 +359,27 @@ const STATUS: Record<number, { label: string; type: 'info' | 'success' | 'danger
 const DURATION_TEXT: Record<string, string> = { month: '月卡', quarter: '季卡', year: '年卡', permanent: '永久' }
 
 // ==================== 客户端下发（商城链接） ====================
-/** 升级链接按 (version, level) 分 4 组，同组内不同时长共用链接 */
-const UPGRADE_GROUPS: Array<{ key: string; label: string; version: number; level: number }> = [
-  { key: 'v1l1', label: '个人普通版（v1l1）', version: 1, level: 1 },
-  { key: 'v1l2', label: '个人高级版（v1l2）', version: 1, level: 2 },
-  { key: 'v2l1', label: '企业普通版（v2l1）', version: 2, level: 1 },
-  { key: 'v2l2', label: '企业高级版（v2l2）', version: 2, level: 2 },
+/** 升级链接按 4 个档位时长下发；同档位的个人/企业、普通/高级 SKU 共用该链接 */
+const UPGRADE_DURATIONS: Array<{ key: string; label: string }> = [
+  { key: 'month', label: '月卡' },
+  { key: 'quarter', label: '季卡' },
+  { key: 'year', label: '年卡' },
+  { key: 'permanent', label: '永久' },
 ]
 
-const upgradeUrls = reactive<Record<string, string>>({ v1l1: '', v1l2: '', v2l1: '', v2l2: '' })
+const upgradeUrls = reactive<Record<string, string>>({ month: '', quarter: '', year: '', permanent: '' })
 const seatAddonMallUrl = ref('')
 const savingMall = ref(false)
 const skus = ref<SkuItem[]>([])
 
-const skuOptions = computed(() => {
-  const order = ['month', 'quarter', 'year', 'permanent']
-  return skus.value
-    .filter((s) => s.enabled)
-    .slice()
-    .sort(
-      (a, b) =>
-        a.version - b.version ||
-        a.level - b.level ||
-        order.indexOf(a.duration) - order.indexOf(b.duration)
-    )
-})
-
-function skuText(s: SkuItem) {
-  return `${s.version === 2 ? '企业' : '个人'}${s.level === 2 ? '高级' : '普通'} · ${
-    DURATION_TEXT[s.duration] || s.duration
-  }（${s.code}）`
-}
-
-/** 把每组链接展开写入该组全部 SKU code */
+/** 把每个时长的链接展开写入该时长全部 SKU code（含个人/企业、普通/高级） */
 function buildUpgradeLinks(): Record<string, string> {
   const links: Record<string, string> = {}
-  for (const g of UPGRADE_GROUPS) {
+  for (const g of UPGRADE_DURATIONS) {
     const url = (upgradeUrls[g.key] || '').trim()
     if (!url) continue
     for (const s of skus.value) {
-      if (s.version === g.version && s.level === g.level) links[s.code] = url
+      if (s.duration === g.key) links[s.code] = url
     }
   }
   return links
@@ -410,10 +389,8 @@ async function loadMallLink() {
   const [state, rows] = await Promise.all([getUpgradeLinks(), getSkus()])
   skus.value = rows
   seatAddonMallUrl.value = state.seatAddonMallUrl || ''
-  for (const g of UPGRADE_GROUPS) {
-    const hit = rows.find(
-      (s) => s.version === g.version && s.level === g.level && !!state.links[s.code]
-    )
+  for (const g of UPGRADE_DURATIONS) {
+    const hit = rows.find((s) => s.duration === g.key && !!state.links[s.code])
     upgradeUrls[g.key] = hit ? state.links[hit.code] : ''
   }
 }
@@ -463,21 +440,19 @@ const upgradeGenVisible = ref(false)
 const upgradeGenerating = ref(false)
 const upgradeGenFormRef = ref<FormInstance>()
 const upgradeGenForm = reactive({
-  toSkuId: '',
-  fromSkuId: '',
+  duration: 'month',
   accountId: '',
   count: 1,
   validUntil: '' as string,
   remark: '',
 })
 const upgradeGenRules: FormRules = {
-  toSkuId: [{ required: true, message: '请选择升级目标档位', trigger: 'change' }],
+  duration: [{ required: true, message: '请选择档位时长', trigger: 'change' }],
   count: [{ required: true, message: '请设置生成数量', trigger: 'change' }],
 }
 
 function openUpgradeGenerate() {
-  upgradeGenForm.toSkuId = ''
-  upgradeGenForm.fromSkuId = ''
+  upgradeGenForm.duration = 'month'
   upgradeGenForm.accountId = ''
   upgradeGenForm.count = 1
   upgradeGenForm.validUntil = ''
@@ -495,8 +470,7 @@ async function submitUpgradeGenerate() {
   upgradeGenerating.value = true
   try {
     const rows = await createUpgradeCodes({
-      toSkuId: upgradeGenForm.toSkuId,
-      fromSkuId: upgradeGenForm.fromSkuId || null,
+      duration: upgradeGenForm.duration,
       accountId: upgradeGenForm.accountId.trim() || null,
       count: upgradeGenForm.count,
       validUntil: upgradeGenForm.validUntil || null,

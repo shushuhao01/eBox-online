@@ -15,6 +15,9 @@ import { Entitlements, getEntitlements } from './EntitlementService';
 /** 按账号聚合的长连接集合（同一账号可同时登录多台设备） */
 const clients = new Map<string, Set<Response>>();
 
+/** 连接 -> 机器指纹（admin 设备踢下线时按指纹精确投递） */
+const clientMeta = new WeakMap<Response, { machineFp: string }>();
+
 // 保活：每 25s 写一行 SSE 注释，避免中间代理按空闲超时断开
 const KEEPALIVE_MS = 25 * 1000;
 let keepaliveTimer: NodeJS.Timeout | null = null;
@@ -51,13 +54,15 @@ function writeEntitlements(res: Response, entitlements: Entitlements): void {
 }
 
 /** 新连接接入：登记并立即下发当前权益快照，避免等待下一次变更。 */
-export function addAccountClient(accountId: string, res: Response, initial: Entitlements): void {
+export function addAccountClient(accountId: string, res: Response, initial: Entitlements, machineFp?: string): void {
   let set = clients.get(accountId);
   if (!set) {
     set = new Set();
     clients.set(accountId, set);
   }
   set.add(res);
+  const fp = String(machineFp || '').trim().toLowerCase();
+  if (fp) clientMeta.set(res, { machineFp: fp });
   ensureKeepalive();
   writeEntitlements(res, initial);
 }
@@ -99,6 +104,15 @@ export async function pushEntitlementsForAccountId(accountId: string): Promise<n
   return sent;
 }
 
+/** 套餐能力（如 caps.maxEnvs）变更后，刷新全部在线账号的权益快照。 */
+export async function refreshAllEntitlements(): Promise<number> {
+  let total = 0;
+  for (const accountId of [...clients.keys()]) {
+    total += await pushEntitlementsForAccountId(accountId);
+  }
+  return total;
+}
+
 /** 受影响账号：个人卡为持卡账号；企业卡为企业下全部账号（管理员 + 成员）。 */
 async function affectedAccountIds(key: LicenseKey): Promise<string[]> {
   const ids = new Set<string>();
@@ -112,6 +126,50 @@ async function affectedAccountIds(key: LicenseKey): Promise<string[]> {
     for (const r of rows) ids.add(String(r.id));
   }
   return [...ids];
+}
+
+/**
+ * 强制下线：向指定账号的在线长连接推送 account.kicked 并断开。
+ * machineFp 非空时只投递给该设备（设备管理「踢下线」）；为空则踢掉该账号全部设备。
+ * 返回实际投递的连接数。
+ */
+export function pushKick(accountId: string, reason: string, machineFp?: string): number {
+  const set = clients.get(accountId);
+  if (!set || set.size === 0) return 0;
+  const fp = String(machineFp || '').trim().toLowerCase();
+  let sent = 0;
+  for (const res of [...set]) {
+    if (fp) {
+      const meta = clientMeta.get(res);
+      if (!meta || meta.machineFp !== fp) continue;
+    }
+    try {
+      const payload = { type: 'account.kicked', reason: reason || '账号已下线' };
+      res.write(`event: account.kicked\ndata: ${JSON.stringify(payload)}\n\n`);
+      res.end();
+      sent++;
+    } catch {
+      // 连接已断开，忽略
+    }
+    set.delete(res);
+  }
+  if (set.size === 0) clients.delete(accountId);
+  stopKeepaliveIfIdle();
+  if (sent > 0) logger.info(`SSE 强制下线：账号 ${accountId}${fp ? ` 设备 ${fp}` : ''}（${sent} 个连接）`);
+  return sent;
+}
+
+/** 向多个账号推送强制下线。 */
+export function pushKickForAccounts(accountIds: string[], reason: string, machineFp?: string): number {
+  let sent = 0;
+  for (const id of accountIds) sent += pushKick(id, reason, machineFp);
+  return sent;
+}
+
+/** 卡密设备被踢下线：找到该卡密关联的账号并按其机器指纹精确投递。 */
+export async function kickKeyDevices(key: LicenseKey | null, reason: string, machineFp?: string): Promise<number> {
+  if (!key) return 0;
+  return pushKickForAccounts(await affectedAccountIds(key), reason, machineFp);
 }
 
 /** 卡密状态/权益变化后广播（作废、恢复、人工续期等）；无在线连接时静默。 */

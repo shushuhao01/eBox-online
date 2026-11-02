@@ -24,6 +24,9 @@
         </el-select>
         <span class="hint">共 {{ filtered.length }} / {{ list.length }} 个档位；停用的档位不会下发给客户端</span>
       </div>
+      <div class="hint" style="margin-bottom: 8px">
+        环境上限即客户端可同时创建的环境数量（服务端 caps.maxEnvs），留空则按档位默认：个人普通 5 / 个人高级 20 / 企业普通 20 / 企业高级 50。
+      </div>
       <el-table :data="filtered" v-loading="loading" stripe>
         <el-table-column label="编码" width="150">
           <template #default="{ row }">
@@ -42,6 +45,20 @@
           <template #default="{ row }">{{ DURATION_TEXT[row.duration] || row.duration }}</template>
         </el-table-column>
         <el-table-column label="席位" width="80" align="center" prop="seats" />
+        <el-table-column label="环境上限" width="150" align="center">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row._maxEnvs"
+              :min="0"
+              :max="9999"
+              :value-on-clear="null"
+              :placeholder="`默认 ${defaultMaxEnvs(row)}`"
+              controls-position="right"
+              size="small"
+              style="width: 120px"
+            />
+          </template>
+        </el-table-column>
         <el-table-column label="续费链接" min-width="300">
           <template #default="{ row }">
             <el-input
@@ -73,7 +90,13 @@ import { ElMessage } from 'element-plus'
 import { Refresh, Check, Promotion, Search } from '@element-plus/icons-vue'
 import { getSkus, updateSku, toggleSku, pushClientConfig, type SkuItem } from '@/api/mall'
 
-type Row = SkuItem & { _originalUrl: string; _toggling?: boolean }
+type Row = SkuItem & {
+  _originalUrl: string
+  _maxEnvs: number | null
+  _originalMaxEnvs: number | null
+  _capsBase: Record<string, unknown>
+  _toggling?: boolean
+}
 
 const DURATION_TEXT: Record<string, string> = { month: '月', quarter: '季', year: '年', permanent: '永久' }
 const TIER_FILTERS: Array<{ label: string; value: string }> = [
@@ -98,6 +121,27 @@ function tierText(row: SkuItem): string {
   return `${row.version === 2 ? '企业' : '个人'}${row.level === 2 ? '高级' : '普通'}`
 }
 
+/** 服务端未配置 caps.maxEnvs 时的默认值（与 EntitlementService 保持一致） */
+function defaultMaxEnvs(row: SkuItem): number {
+  if (row.version === 1) return row.level === 2 ? 20 : 5
+  return row.level === 2 ? 50 : 20
+}
+
+function parseCaps(capsJson: string | null): Record<string, unknown> {
+  if (!capsJson) return {}
+  try {
+    const obj = JSON.parse(capsJson)
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? (obj as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function maxEnvsOf(caps: Record<string, unknown>): number | null {
+  const v = caps.maxEnvs
+  return typeof v === 'number' && Number.isFinite(v) ? Math.floor(v) : null
+}
+
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   return list.value.filter((r) => {
@@ -111,16 +155,35 @@ async function load() {
   loading.value = true
   try {
     const rows = await getSkus()
-    list.value = rows.map((r) => ({ ...r, mallUrl: r.mallUrl || '', _originalUrl: r.mallUrl || '' }))
+    list.value = rows.map((r) => {
+      const caps = parseCaps(r.capsJson)
+      const maxEnvs = maxEnvsOf(caps)
+      return {
+        ...r,
+        mallUrl: r.mallUrl || '',
+        _originalUrl: r.mallUrl || '',
+        _maxEnvs: maxEnvs,
+        _originalMaxEnvs: maxEnvs,
+        _capsBase: caps,
+      }
+    })
   } finally {
     loading.value = false
   }
 }
 
-/** 保存续费链接（SKU.mallUrl），返回变更条数 */
+/** 保存续费链接与环境上限（SKU.mallUrl / capsJson.maxEnvs），返回变更条数 */
 async function persistRenewalLinks(): Promise<number> {
-  const changed = list.value.filter((r) => (r.mallUrl || '') !== r._originalUrl)
+  const changed = list.value.filter(
+    (r) => (r.mallUrl || '') !== r._originalUrl || r._maxEnvs !== r._originalMaxEnvs
+  )
   for (const row of changed) {
+    // 保留 capsJson 里其它能力项，只增删 maxEnvs
+    const caps: Record<string, unknown> = { ...row._capsBase }
+    if (row._maxEnvs === null || row._maxEnvs === undefined) delete caps.maxEnvs
+    else caps.maxEnvs = Math.floor(row._maxEnvs)
+    const capsJson = Object.keys(caps).length ? JSON.stringify(caps) : null
+
     await updateSku(row.id, {
       code: row.code,
       version: row.version,
@@ -130,6 +193,7 @@ async function persistRenewalLinks(): Promise<number> {
       label: row.label,
       seats: row.seats,
       mallUrl: row.mallUrl || null,
+      capsJson,
       sort: row.sort,
       enabled: row.enabled,
     })

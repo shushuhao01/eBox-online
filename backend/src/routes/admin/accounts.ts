@@ -14,6 +14,7 @@ import { ok, fail, clientIp } from '../../middleware/helpers';
 import { ApiError } from '../../middleware/errorHandler';
 import { writeOperationLog } from '../../services/LogService';
 import { revokeAccountSessions } from '../../services/AccountService';
+import { pushKick } from '../../services/AccountEventService';
 import { getEntitlements, findEffectiveKey } from '../../services/EntitlementService';
 import { toKeySummary } from '../../services/LicenseAccountService';
 import { resolveLocation } from '../../services/SiteAnalyticsService';
@@ -402,6 +403,8 @@ router.patch('/:id/status', async (req, res) => {
       account.lockCount = 0;
       account.lockedUntil = null;
     } else {
+      // 实时通知客户端下线（与公告同一 SSE 通道），再吊销会话
+      pushKick(account.id, '您的账号已被管理员停用');
       await revokeAccountSessions(account.id);
     }
     await accountRepo().save(account);
