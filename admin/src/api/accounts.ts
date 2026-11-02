@@ -50,3 +50,120 @@ export function resetAccountPassword(id: string) {
 export function setAccountStatus(id: string, status: 1 | 2) {
   return patch(`/accounts/${id}/status`, { status })
 }
+
+// ==================== 用户完整档案 ====================
+
+export interface AccountKeyRow {
+  id: string
+  code: string
+  type: number
+  tier: number
+  level: number
+  tierCode: string | null
+  durationDays: number
+  seats: number
+  status: number
+  bound: boolean | number
+  unbindMax: number
+  enterpriseId: string | null
+  activatedAt: string | null
+  accountExpireAt: string | null
+  expireAt: string | null
+  usedAt: string | null
+  createdAt: string
+  remark: string | null
+}
+
+export interface AccountActivationRow {
+  id: string
+  keyId: string
+  keyCode: string | null
+  tier: number | null
+  level: number | null
+  machineFp: string
+  status: number
+  firstActivateAt: string | null
+  lastOnlineAt: string | null
+  lastHeartbeatAt: string | null
+  lastIp: string | null
+  region: string | null
+  osInfo: string | null
+  appVersion: string | null
+  online: boolean
+}
+
+export interface AccountDeviceRow {
+  id: string
+  machineFp: string
+  deviceName: string | null
+  osInfo: string | null
+  appVersion: string | null
+  status: number
+  envTotal: number
+  envRunning: number
+  boundResourceIds: string[]
+  firstLoginAt: string | null
+  lastActiveAt: string | null
+  online: boolean
+}
+
+export interface AccountSessionRow {
+  id: string
+  machineFp: string | null
+  clientIp: string | null
+  region: string | null
+  userAgent: string | null
+  createdAt: string
+  lastSeenAt: string | null
+  expiresAt: string
+  revokedAt: string | null
+  online: boolean
+}
+
+export interface AccountIpRow {
+  id: string
+  resourceId: string
+  proxyType: string | null
+  host: string | null
+  port: number | null
+  remark: string | null
+  health: number | null
+  status: number
+  envId: string | null
+  envName: string | null
+  boundAt: string | null
+  releasedAt: string | null
+  releaseReason: string | null
+}
+
+export interface AccountDetail {
+  account: AccountItem & { lastLoginIp: string | null; lastLoginRegion: string | null; updatedAt: string | null }
+  enterprise: {
+    id: string; code: string; name: string; status: number
+    seats: number; expireAt: string | null; createdAt: string
+  } | null
+  entitlements: {
+    version: string
+    level: string
+    role: string
+    expireAt: string | null
+    permanent: boolean
+    seats: number
+    tier: string | null
+    activeKeyId: string | null
+  }
+  currentKey: {
+    id: string; codeMasked: string; tier: number; level: number; tierCode: string | null
+    seats: number; status: number; permanent: boolean; activatedAt: string | null
+    expireAt: string | null; enterpriseId: string | null; replacedBy: string | null
+  } | null
+  keys: AccountKeyRow[]
+  devices: AccountDeviceRow[]
+  activations: AccountActivationRow[]
+  sessions: AccountSessionRow[]
+  ipResources: AccountIpRow[]
+}
+
+export function getAccountDetail(id: string) {
+  return get<AccountDetail>(`/accounts/${id}/detail`)
+}

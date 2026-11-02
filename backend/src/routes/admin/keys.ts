@@ -6,6 +6,9 @@ import { LicenseKey } from '../../entities/LicenseKey';
 import { Device } from '../../entities/Device';
 import { Customer } from '../../entities/Customer';
 import { KeyBatch } from '../../entities/KeyBatch';
+import { Account } from '../../entities/account/Account';
+import { Enterprise } from '../../entities/account/Enterprise';
+import { UnbindLog } from '../../entities/UnbindLog';
 import { ok, fail, clientIp } from '../../middleware/helpers';
 import { ApiError } from '../../middleware/errorHandler';
 import { generateKeys, revokeKey, restoreKey, restoreDeletedKey, convertToSwitchKey, findByCode, countUnbindThisMonth } from '../../services/KeyService';
@@ -390,7 +393,7 @@ router.delete('/keys/:id', async (req, res) => {
   }
 });
 
-// GET /api/admin/keys/:id  详情（含设备）
+// GET /api/admin/keys/:id  详情（含设备、绑定账号、企业、换机次数）
 router.get('/keys/:id', async (req, res) => {
   const key = await keyRepo().findOneBy({ id: req.params.id });
   if (!key) return fail(res, '激活码不存在', 1002);
@@ -401,8 +404,33 @@ router.get('/keys/:id', async (req, res) => {
     ...d,
     online: d.status === 1 && !!d.lastOnlineAt && d.lastOnlineAt >= threshold,
   }));
-  const unbindCount = await countUnbindThisMonth(key.id);
-  ok(res, { key, devices: deviceList, unbindCount });
+
+  const [unbindCount, unbindTotal, account, enterprise] = await Promise.all([
+    countUnbindThisMonth(key.id),
+    AppDataSource.getRepository(UnbindLog).count({ where: { keyId: String(key.id) } }),
+    key.accountId ? AppDataSource.getRepository(Account).findOneBy({ id: String(key.accountId) }) : Promise.resolve(null),
+    key.enterpriseId ? AppDataSource.getRepository(Enterprise).findOneBy({ id: String(key.enterpriseId) }) : Promise.resolve(null),
+  ]);
+
+  ok(res, {
+    key,
+    devices: deviceList,
+    unbindCount,
+    unbindTotal,
+    account: account
+      ? {
+          id: String(account.id),
+          login: account.login,
+          nickname: account.nickname,
+          email: account.email,
+          phone: account.phone,
+          status: account.status,
+        }
+      : null,
+    enterprise: enterprise
+      ? { id: String(enterprise.id), code: enterprise.code, name: enterprise.name, status: enterprise.status }
+      : null,
+  });
 });
 
 export default router;

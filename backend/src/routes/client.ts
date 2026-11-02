@@ -108,6 +108,37 @@ router.post('/heartbeat', async (req, res) => {
   }
 });
 
+// 在线状态上报（团队仪表盘）：不参与授权校验，只刷新账号设备的活跃时间与环境统计。
+// 客户端每 5 分钟上报一次，使「近 30 分钟在线」判定真实可用（心跳是小时级，无法支撑）。
+const presenceSchema = Joi.object({
+  machineFp: Joi.string().required().length(16).pattern(/^[0-9a-f]{16}$/),
+  envTotal: Joi.number().integer().min(0).max(100000),
+  envRunning: Joi.number().integer().min(0).max(100000),
+  boundResourceIds: Joi.array().items(Joi.string().max(64)).max(500),
+});
+
+// POST /api/v1/presence
+router.post('/presence', async (req, res) => {
+  try {
+    const { error, value } = presenceSchema.validate(req.body);
+    if (error) return fail(res, `参数错误：${error.message}`, 400);
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    const auth = token ? await authenticateToken(token) : null;
+    if (!auth) return fail(res, '未登录或登录已过期', 401);
+    await updateDeviceEnvStats(auth.account, {
+      machineFp: value.machineFp,
+      envTotal: value.envTotal,
+      envRunning: value.envRunning,
+      boundResourceIds: value.boundResourceIds,
+    });
+    ok(res, { serverTime: Math.floor(Date.now() / 1000) });
+  } catch (e) {
+    if (e instanceof ApiError) return fail(res, e.message, e.code);
+    throw e;
+  }
+});
+
 // POST /api/v1/unbind
 router.post('/unbind', async (req, res) => {
   try {

@@ -1,5 +1,12 @@
 <template>
   <div class="page-container">
+    <el-alert
+      class="customer-tip"
+      type="info"
+      :closable="false"
+      show-icon
+      title="客户用于登记批发/大客户台账：建码时选择客户即可归集其名下激活码，便于统计与对账；普通零售无需建客户。"
+    />
     <!-- 工具栏 -->
     <div class="toolbar-card">
       <el-input
@@ -370,6 +377,10 @@ onMounted(load)
 </script>
 
 <style scoped lang="scss">
+.customer-tip {
+  margin-bottom: 12px;
+}
+
 .toolbar-right {
   margin-left: auto;
 }

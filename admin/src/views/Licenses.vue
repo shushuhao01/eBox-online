@@ -283,7 +283,7 @@
     </el-dialog>
 
     <!-- 详情抽屉 -->
-    <el-drawer v-model="detailVisible" title="激活码详情" size="560px">
+    <el-drawer v-model="detailVisible" title="激活码详情" size="680px">
       <template v-if="detail">
         <div class="detail-code code-font">{{ detail.key.code }}</div>
         <el-descriptions :column="2" border size="small" style="margin-top: 16px">
@@ -314,12 +314,35 @@
             <span v-if="detail.key.tier === 2"> / {{ detail.key.seats }} 席</span>
             <span v-if="detail.key.tierCode" class="text-secondary"> / {{ detail.key.tierCode }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="客户ID">{{ detail.key.customerId || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="绑定账号">{{ detail.key.accountId ? `账号#${detail.key.accountId}` : '-' }}</el-descriptions-item>
-          <el-descriptions-item label="所属企业">{{ detail.key.enterpriseId ? `企业#${detail.key.enterpriseId}` : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="客户">
+            {{ detail.key.customerId ? `客户#${detail.key.customerId}` : '-' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="绑定用户">
+            <template v-if="detail.account">
+              <div>{{ detail.account.login }}</div>
+              <div class="text-secondary">
+                {{ detail.account.nickname || '-' }}<span v-if="detail.account.email"> · {{ detail.account.email }}</span>
+              </div>
+            </template>
+            <span v-else-if="detail.key.accountId" class="text-secondary">账号#{{ detail.key.accountId }}</span>
+            <span v-else class="text-secondary">未绑定</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="所属企业">
+            <template v-if="detail.enterprise">
+              {{ detail.enterprise.name }}<span class="text-secondary">（{{ detail.enterprise.code }}）</span>
+            </template>
+            <span v-else-if="detail.key.enterpriseId" class="text-secondary">企业#{{ detail.key.enterpriseId }}</span>
+            <span v-else class="text-secondary">-</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="绑定时间">
+            {{ formatTime(detail.key.activatedAt || detail.key.usedAt) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="换机次数">
+            <b>{{ detail.unbindTotal }}</b> 次
+            <span class="text-secondary">（本月 {{ detail.unbindCount }} 次）</span>
+          </el-descriptions-item>
           <el-descriptions-item label="批次ID">{{ detail.key.batchId || '-' }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ formatTime(detail.key.createdAt) }}</el-descriptions-item>
-          <el-descriptions-item label="使用时间">{{ formatTime(detail.key.usedAt) }}</el-descriptions-item>
           <el-descriptions-item label="作废原因" :span="2">{{ detail.key.revokedReason || '-' }}</el-descriptions-item>
           <el-descriptions-item label="备注" :span="2">{{ detail.key.remark || '-' }}</el-descriptions-item>
         </el-descriptions>
@@ -329,11 +352,11 @@
         </div>
 
         <div class="detail-section-title">
-          绑定设备（{{ detail.devices.length }}） · 本月解绑次数：<b>{{ detail.unbindCount }}</b>
+          绑定设备（{{ detail.devices.length }}） · 累计换机：<b>{{ detail.unbindTotal }}</b> 次
         </div>
-        <el-table :data="detail.devices" size="small" stripe max-height="280">
-          <el-table-column label="设备ID" prop="id" width="90" />
-          <el-table-column label="指纹" min-width="120">
+        <el-table :data="detail.devices" size="small" stripe max-height="300">
+          <el-table-column label="设备ID" prop="id" width="80" />
+          <el-table-column label="指纹" min-width="110">
             <template #default="{ row }">
               <el-tooltip :content="row.machineFp" placement="top">
                 <span class="code-font">{{ row.machineFp.slice(0, 8) }}...</span>
@@ -346,7 +369,13 @@
               {{ deviceStatusText(row.status, !!row.online) }}
             </template>
           </el-table-column>
-          <el-table-column label="最后在线" width="110">
+          <el-table-column label="最后 IP" width="120">
+            <template #default="{ row }">{{ row.lastIp || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="最后心跳" width="140">
+            <template #default="{ row }"><TimeCell :value="row.lastHeartbeatAt" /></template>
+          </el-table-column>
+          <el-table-column label="最后在线" width="140">
             <template #default="{ row }"><TimeCell :value="row.lastOnlineAt" /></template>
           </el-table-column>
         </el-table>
@@ -365,7 +394,7 @@ import dayjs from 'dayjs'
 import {
   generateKeys, getKeys, revokeKey, restoreKey, convertKey, getKeyDetail, exportKeys,
   batchRevokeKeys, batchDeleteKeys, deleteKey,
-  type GenerateParams, type LicenseKeyItem,
+  type GenerateParams, type LicenseKeyItem, type KeyDetail,
 } from '@/api/keys'
 import { getCustomers, type Customer } from '@/api/customers'
 import { getBatches, type KeyBatch } from '@/api/batches'
@@ -792,7 +821,7 @@ async function handleExport() {
 
 // ============ 详情 ============
 const detailVisible = ref(false)
-const detail = ref<{ key: LicenseKeyItem; devices: any[]; unbindCount: number } | null>(null)
+const detail = ref<KeyDetail | null>(null)
 
 async function openDetail(row: LicenseKeyItem) {
   detailVisible.value = true

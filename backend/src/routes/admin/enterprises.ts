@@ -1,13 +1,19 @@
 import { Router } from 'express';
 import Joi from 'joi';
+import { In } from 'typeorm';
 import { AppDataSource } from '../../config/database';
 import { Enterprise } from '../../entities/account/Enterprise';
 import { Account } from '../../entities/account/Account';
 import { EnterpriseMember } from '../../entities/account/EnterpriseMember';
+import { Sku } from '../../entities/account/Sku';
+import { IpResource } from '../../entities/account/IpResource';
+import { IpAssignment } from '../../entities/account/IpAssignment';
+import { LicenseKey } from '../../entities/LicenseKey';
 import { ok, fail, clientIp, superAdminRequired } from '../../middleware/helpers';
 import { ApiError } from '../../middleware/errorHandler';
 import { writeOperationLog } from '../../services/LogService';
 import { pushEntitlementsForAccountId } from '../../services/AccountEventService';
+import { getEntitlements } from '../../services/EntitlementService';
 
 const router = Router();
 const entRepo = () => AppDataSource.getRepository(Enterprise);
@@ -75,7 +81,7 @@ router.get('/enterprises', async (req, res) => {
   }
 });
 
-// GET /api/admin/enterprises/:id（企业详情 + 成员）
+// GET /api/admin/enterprises/:id（企业详情 + 成员 + 档位 + 卡密 + 网络 IP）
 router.get('/enterprises/:id', async (req, res) => {
   try {
     const id = String(req.params.id);
@@ -92,6 +98,23 @@ router.get('/enterprises/:id', async (req, res) => {
       : [];
     const accountMap = new Map(accounts.map((a) => [String(a.id), a]));
 
+    const [sku, entitlements, keys, resources, assignments] = await Promise.all([
+      ent.skuId ? AppDataSource.getRepository(Sku).findOneBy({ id: String(ent.skuId) }) : Promise.resolve(null),
+      owner ? getEntitlements(owner) : Promise.resolve(null),
+      AppDataSource.getRepository(LicenseKey).find({
+        where: accountIds.length
+          ? [{ enterpriseId: id }, { accountId: In(accountIds) }]
+          : [{ enterpriseId: id }],
+        order: { id: 'DESC' },
+        take: 100,
+      }),
+      AppDataSource.getRepository(IpResource).find({ where: { enterpriseId: id }, order: { id: 'DESC' } }),
+      AppDataSource.getRepository(IpAssignment).find({ where: { enterpriseId: id }, order: { id: 'DESC' } }),
+    ]);
+
+    const usedSeats = members.filter((m) => m.status !== 3).length;
+    const activeIps = assignments.filter((a) => a.releasedAt === null).length;
+
     ok(res, {
       enterprise: {
         id: String(ent.id),
@@ -100,12 +123,19 @@ router.get('/enterprises/:id', async (req, res) => {
         name: ent.name,
         ownerAccountId: String(ent.ownerAccountId),
         ownerLogin: owner?.login || null,
+        ownerNickname: owner?.nickname || null,
+        ownerEmail: owner?.email || null,
+        ownerLastLoginAt: owner?.lastLoginAt || null,
         seats: ent.seats,
+        usedSeats,
         skuId: ent.skuId,
+        skuLabel: sku?.label || null,
         status: ent.status,
         expireAt: ent.expireAt,
         createdAt: ent.createdAt,
+        updatedAt: ent.updatedAt,
       },
+      entitlements,
       members: members.map((m) => {
         const a = accountMap.get(String(m.accountId));
         return {
@@ -113,15 +143,50 @@ router.get('/enterprises/:id', async (req, res) => {
           accountId: String(m.accountId),
           login: a?.login || null,
           nickname: a?.nickname || null,
+          email: a?.email || null,
           role: m.role,
           hint: m.hint,
           remark: m.remark,
           status: m.status,
           accountStatus: a?.status ?? null,
+          lastLoginIp: a?.lastLoginIp || null,
           lastLoginAt: a?.lastLoginAt || null,
           createdAt: m.createdAt,
         };
       }),
+      keys: keys.map((k) => ({
+        id: String(k.id),
+        code: k.code,
+        tier: k.tier,
+        level: k.level,
+        tierCode: k.tierCode,
+        durationDays: k.durationDays,
+        seats: k.seats,
+        status: k.status,
+        bound: k.bound,
+        accountId: k.accountId,
+        accountLogin: k.accountId ? accountMap.get(String(k.accountId))?.login || null : null,
+        activatedAt: k.activatedAt,
+        accountExpireAt: k.accountExpireAt,
+        usedAt: k.usedAt,
+        createdAt: k.createdAt,
+      })),
+      ipResources: {
+        total: resources.length,
+        enabled: resources.filter((r) => r.status === 1).length,
+        assigned: activeIps,
+        using: resources.filter((r) => r.status === 1 && assignments.some((a) => String(a.resourceId) === String(r.id) && a.releasedAt === null)).length,
+        list: resources.slice(0, 50).map((r) => ({
+          id: String(r.id),
+          host: r.host,
+          port: r.port,
+          proxyType: r.proxyType,
+          status: r.status,
+          health: r.health,
+          remark: r.remark,
+          assigned: assignments.some((a) => String(a.resourceId) === String(r.id) && a.releasedAt === null),
+        })),
+      },
     });
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);

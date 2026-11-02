@@ -56,6 +56,39 @@
             <span class="health-text">服务{{ health ? '正常' : '异常' }}</span>
           </div>
           <el-divider direction="vertical" />
+          <!-- 站内消息铃铛 -->
+          <el-popover v-model:visible="msgVisible" placement="bottom-end" :width="380" trigger="click" popper-class="msg-popper">
+            <template #reference>
+              <div class="bell-wrap" :title="unread ? `站内消息（${unread} 条未读）` : '站内消息'">
+                <el-badge :value="unread" :hidden="unread === 0" :max="99">
+                  <el-icon :size="19"><Bell /></el-icon>
+                </el-badge>
+              </div>
+            </template>
+            <div class="msg-panel">
+              <div class="msg-head">
+                <span class="msg-head-title">站内消息</span>
+                <el-button link type="primary" size="small" :disabled="!unread" @click="handleReadAll">全部已读</el-button>
+              </div>
+              <div v-if="messages.length" class="msg-list">
+                <div
+                  v-for="m in messages"
+                  :key="m.id"
+                  class="msg-item"
+                  :class="{ unread: m.isRead !== 1 }"
+                  @click="openMessage(m)"
+                >
+                  <div class="msg-item-head">
+                    <span class="msg-item-title">{{ m.title }}</span>
+                    <span class="msg-time">{{ formatMsgTime(m.createdAt) }}</span>
+                  </div>
+                  <div class="msg-item-content">{{ m.content || '（无正文）' }}</div>
+                </div>
+              </div>
+              <el-empty v-else description="暂无消息" :image-size="56" />
+            </div>
+          </el-popover>
+          <el-divider direction="vertical" />
           <el-dropdown trigger="click" @command="onCommand">
             <span class="user-info">
               <el-avatar :size="30" class="user-avatar">{{ displayName.slice(0, 1) }}</el-avatar>
@@ -81,14 +114,27 @@
         <router-view />
       </main>
     </div>
+
+    <!-- 站内消息完整内容 -->
+    <el-dialog v-model="msgDetailVisible" title="站内消息" width="560px">
+      <template v-if="currentMsg">
+        <div class="msg-dialog-title">{{ currentMsg.title }}</div>
+        <div class="msg-dialog-time">{{ formatMsgTime(currentMsg.createdAt) }}</div>
+        <div class="msg-dialog-content">{{ currentMsg.content || '（无正文）' }}</div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import dayjs from 'dayjs'
 import { useUserStore } from '@/stores/user'
+import {
+  getMessages, getUnreadCount, readMessage, readAllMessages, type SystemMessageRow,
+} from '@/api/notify'
 
 const store = useUserStore()
 const route = useRoute()
@@ -133,7 +179,7 @@ const menus: MenuNode[] = [
     icon: 'OfficeBuilding',
     children: [
       { title: '企业管理', path: '/enterprises', icon: 'OfficeBuilding' },
-      { title: '账号管理', path: '/accounts', icon: 'UserFilled' },
+      { title: '用户管理', path: '/accounts', icon: 'UserFilled' },
       { title: '客户管理', path: '/customers', icon: 'User' },
     ],
   },
@@ -228,14 +274,73 @@ async function checkHealth() {
 }
 
 let healthTimer: number | undefined
+let unreadTimer: number | undefined
 
 onMounted(() => {
   checkHealth()
   healthTimer = window.setInterval(checkHealth, 30000)
+  loadUnread()
+  unreadTimer = window.setInterval(loadUnread, 60000)
 })
 
 onBeforeUnmount(() => {
   if (healthTimer) window.clearInterval(healthTimer)
+  if (unreadTimer) window.clearInterval(unreadTimer)
+})
+
+// ============ 站内消息 ============
+const unread = ref(0)
+const messages = ref<SystemMessageRow[]>([])
+const msgVisible = ref(false)
+const msgDetailVisible = ref(false)
+const currentMsg = ref<SystemMessageRow | null>(null)
+
+function formatMsgTime(v?: string | null) {
+  return v ? dayjs(v).format('MM-DD HH:mm') : '-'
+}
+
+async function loadUnread() {
+  try {
+    unread.value = (await getUnreadCount()).count
+  } catch {
+    /* 未登录/接口异常时静默 */
+  }
+}
+
+async function loadMessages() {
+  try {
+    messages.value = (await getMessages({ page: 1, pageSize: 20 })).list
+  } catch {
+    messages.value = []
+  }
+}
+
+async function openMessage(m: SystemMessageRow) {
+  currentMsg.value = m
+  msgDetailVisible.value = true
+  if (m.isRead !== 1) {
+    try {
+      await readMessage(m.id)
+      m.isRead = 1
+      await loadUnread()
+    } catch {
+      /* 已读标记失败不阻断查看 */
+    }
+  }
+}
+
+async function handleReadAll() {
+  try {
+    await readAllMessages()
+    messages.value.forEach((m) => (m.isRead = 1))
+    unread.value = 0
+  } catch {
+    /* 已提示 */
+  }
+}
+
+watch(msgVisible, (v) => {
+  if (v) loadMessages()
 })
 
 // ============ 用户操作 ============
@@ -403,6 +508,23 @@ async function onCommand(cmd: string) {
       font-size: 14px;
     }
   }
+
+  .bell-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: background 0.15s, color 0.15s;
+
+    &:hover {
+      background: rgba(58, 122, 254, 0.1);
+      color: var(--primary-color);
+    }
+  }
 }
 
 .content {
@@ -436,5 +558,119 @@ async function onCommand(cmd: string) {
       color: #fff;
     }
   }
+}
+
+/* 站内消息：popover / dialog 会 teleport 到 body，需全局样式 */
+.msg-popper {
+  padding: 0 !important;
+
+  .msg-panel {
+    .msg-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-bottom: 1px solid #eef1f6;
+
+      .msg-head-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #1f2d4d;
+      }
+    }
+
+    .msg-list {
+      max-height: 360px;
+      overflow-y: auto;
+    }
+
+    .msg-item {
+      padding: 10px 12px;
+      border-bottom: 1px solid #f4f6fa;
+      cursor: pointer;
+      transition: background 0.15s;
+
+      &:hover {
+        background: #f7f9fc;
+      }
+
+      &.unread {
+        background: #f2f7ff;
+
+        .msg-item-title::before {
+          content: '';
+          display: inline-block;
+          width: 6px;
+          height: 6px;
+          margin-right: 6px;
+          border-radius: 50%;
+          background: var(--primary-color);
+          vertical-align: middle;
+        }
+
+        .msg-item-title {
+          font-weight: 600;
+        }
+      }
+
+      .msg-item-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .msg-item-title {
+        flex: 1;
+        font-size: 13px;
+        color: #1f2d4d;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .msg-time {
+        flex-shrink: 0;
+        font-size: 12px;
+        color: #98a2b3;
+      }
+
+      .msg-item-content {
+        margin-top: 4px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #667085;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+    }
+  }
+}
+
+.msg-dialog-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2d4d;
+}
+
+.msg-dialog-time {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #98a2b3;
+}
+
+.msg-dialog-content {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #eef1f6;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #344054;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 56vh;
+  overflow-y: auto;
 }
 </style>

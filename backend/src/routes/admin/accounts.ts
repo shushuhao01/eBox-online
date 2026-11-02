@@ -1,12 +1,22 @@
 import { Router } from 'express';
 import Joi from 'joi';
+import { In } from 'typeorm';
 import { AppDataSource } from '../../config/database';
 import { Account } from '../../entities/account/Account';
 import { Enterprise } from '../../entities/account/Enterprise';
+import { AccountDevice } from '../../entities/account/AccountDevice';
+import { AccountSession } from '../../entities/account/AccountSession';
+import { IpAssignment } from '../../entities/account/IpAssignment';
+import { IpResource } from '../../entities/account/IpResource';
+import { LicenseKey } from '../../entities/LicenseKey';
+import { Device } from '../../entities/Device';
 import { ok, fail, clientIp } from '../../middleware/helpers';
 import { ApiError } from '../../middleware/errorHandler';
 import { writeOperationLog } from '../../services/LogService';
 import { revokeAccountSessions } from '../../services/AccountService';
+import { getEntitlements, findEffectiveKey } from '../../services/EntitlementService';
+import { toKeySummary } from '../../services/LicenseAccountService';
+import { resolveLocation } from '../../services/SiteAnalyticsService';
 import { generateTempPassword, hashPassword } from '../../utils/accountCrypto';
 
 const router = Router();
@@ -147,6 +157,196 @@ async function findAccount(id: string): Promise<Account> {
   if (!account) throw new ApiError('账号不存在', 1008);
   return account;
 }
+
+// GET /api/admin/accounts/:id/detail
+// 用户完整档案：个人信息 / 授权 / 绑定卡密 / 激活记录 / 会话心跳 / 环境 / IP 与归属地
+router.get('/:id/detail', async (req, res) => {
+  try {
+    const account = await findAccount(String(req.params.id));
+    const [enterprise, entitlements, effectiveKey] = await Promise.all([
+      account.enterpriseId ? enterpriseRepo().findOneBy({ id: account.enterpriseId }) : Promise.resolve(null),
+      getEntitlements(account),
+      findEffectiveKey(account),
+    ]);
+
+    const keys = await AppDataSource.getRepository(LicenseKey).find({
+      where: { accountId: account.id },
+      order: { id: 'DESC' },
+      take: 100,
+    });
+    const keyIds = keys.map((k) => String(k.id));
+    const keyMap = new Map(keys.map((k) => [String(k.id), k]));
+
+    const since = new Date(Date.now() - 10 * 60 * 1000);
+    const [devices, sessions, acctDevices, assignments] = await Promise.all([
+      keyIds.length
+        ? AppDataSource.getRepository(Device).find({
+            where: { keyId: In(keyIds) },
+            order: { lastOnlineAt: 'DESC' },
+            take: 100,
+          })
+        : Promise.resolve([]),
+      AppDataSource.getRepository(AccountSession).find({
+        where: { accountId: account.id },
+        order: { lastSeenAt: 'DESC' },
+        take: 20,
+      }),
+      AppDataSource.getRepository(AccountDevice).find({
+        where: { accountId: account.id },
+        order: { lastActiveAt: 'DESC' },
+        take: 50,
+      }),
+      AppDataSource.getRepository(IpAssignment).find({
+        where: { memberAccountId: account.id },
+        order: { id: 'DESC' },
+        take: 30,
+      }),
+    ]);
+
+    const resourceIds = assignments.map((a) => String(a.resourceId));
+    const resources = resourceIds.length
+      ? await AppDataSource.getRepository(IpResource).find({ where: { id: In(resourceIds) } })
+      : [];
+    const resourceMap = new Map(resources.map((r) => [String(r.id), r]));
+
+    // IP 归属地：仅解析最近出现的前 8 个 IP，避免离线库查询拖慢接口
+    const ips = Array.from(new Set([
+      ...devices.map((d) => d.lastIp),
+      ...sessions.map((s) => s.clientIp),
+    ].filter((v): v is string => !!v))).slice(0, 8);
+    const locations = await Promise.all(ips.map((ip) => resolveLocation(ip)));
+    const locMap = new Map<string, { country: string; province: string; city: string; isp: string }>();
+    ips.forEach((ip, i) => locMap.set(ip, locations[i]));
+    const locText = (ip: string | null) => {
+      if (!ip) return null;
+      const l = locMap.get(ip);
+      if (!l) return null;
+      const text = [l.country, l.province, l.city].filter(Boolean).join(' ');
+      return text || null;
+    };
+
+    ok(res, {
+      account: {
+        id: account.id,
+        login: account.login,
+        nickname: account.nickname,
+        email: account.email,
+        phone: account.phone,
+        role: account.role,
+        status: account.status,
+        lockCount: account.lockCount,
+        lockedUntil: account.lockedUntil,
+        everEnterprise: account.everEnterprise === 1,
+        enterpriseId: account.enterpriseId,
+        lastLoginAt: account.lastLoginAt,
+        lastLoginIp: account.lastLoginIp,
+        lastLoginRegion: locText(account.lastLoginIp),
+        createdAt: account.createdAt,
+        updatedAt: account.updatedAt,
+      },
+      enterprise: enterprise
+        ? {
+            id: enterprise.id,
+            code: enterprise.code,
+            name: enterprise.name,
+            status: enterprise.status,
+            seats: enterprise.seats,
+            expireAt: enterprise.expireAt,
+            createdAt: enterprise.createdAt,
+          }
+        : null,
+      entitlements,
+      currentKey: effectiveKey ? toKeySummary(effectiveKey, effectiveKey.id) : null,
+      keys: keys.map((k) => ({
+        id: k.id,
+        code: k.code,
+        type: k.type,
+        tier: k.tier,
+        level: k.level,
+        tierCode: k.tierCode,
+        durationDays: k.durationDays,
+        seats: k.seats,
+        status: k.status,
+        bound: k.bound,
+        unbindMax: k.unbindMax,
+        enterpriseId: k.enterpriseId,
+        activatedAt: k.activatedAt,
+        accountExpireAt: k.accountExpireAt,
+        expireAt: k.expireAt,
+        usedAt: k.usedAt,
+        createdAt: k.createdAt,
+        remark: k.remark,
+      })),
+      devices: acctDevices.map((d) => ({
+        id: d.id,
+        machineFp: d.machineFp,
+        deviceName: d.deviceName,
+        osInfo: d.osInfo,
+        appVersion: d.appVersion,
+        status: d.status,
+        envTotal: d.envTotal,
+        envRunning: d.envRunning,
+        boundResourceIds: d.boundResourceIds || [],
+        firstLoginAt: d.firstLoginAt,
+        lastActiveAt: d.lastActiveAt,
+        online: !!d.lastActiveAt && d.lastActiveAt >= since,
+      })),
+      activations: devices.map((d) => {
+        const key = keyMap.get(String(d.keyId));
+        return {
+          id: d.id,
+          keyId: d.keyId,
+          keyCode: key?.code || null,
+          tier: key?.tier ?? null,
+          level: key?.level ?? null,
+          machineFp: d.machineFp,
+          status: d.status,
+          firstActivateAt: d.firstActivateAt,
+          lastOnlineAt: d.lastOnlineAt,
+          lastHeartbeatAt: d.lastHeartbeatAt,
+          lastIp: d.lastIp,
+          region: locText(d.lastIp),
+          osInfo: d.osInfo,
+          appVersion: d.appVersion,
+          online: d.status === 1 && !!d.lastOnlineAt && d.lastOnlineAt >= since,
+        };
+      }),
+      sessions: sessions.map((s) => ({
+        id: s.id,
+        machineFp: s.machineFp,
+        clientIp: s.clientIp,
+        region: locText(s.clientIp),
+        userAgent: s.userAgent,
+        createdAt: s.createdAt,
+        lastSeenAt: s.lastSeenAt,
+        expiresAt: s.expiresAt,
+        revokedAt: s.revokedAt,
+        online: !s.revokedAt && !!s.lastSeenAt && s.lastSeenAt >= since,
+      })),
+      ipResources: assignments.map((a) => {
+        const r = resourceMap.get(String(a.resourceId));
+        return {
+          id: a.id,
+          resourceId: a.resourceId,
+          proxyType: r?.proxyType ?? null,
+          host: r?.host ?? null,
+          port: r?.port ?? null,
+          remark: r?.remark ?? null,
+          health: r?.health ?? null,
+          status: a.status,
+          envId: a.envId,
+          envName: a.envName,
+          boundAt: a.boundAt,
+          releasedAt: a.releasedAt,
+          releaseReason: a.releaseReason,
+        };
+      }),
+    });
+  } catch (e) {
+    if (e instanceof ApiError) return fail(res, e.message, e.code);
+    throw e;
+  }
+});
 
 // POST /api/admin/accounts/:id/unlock
 router.post('/:id/unlock', async (req, res) => {

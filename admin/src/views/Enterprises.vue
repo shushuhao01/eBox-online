@@ -85,61 +85,190 @@
     </div>
 
     <!-- 企业详情 -->
-    <el-drawer v-model="detailVisible" :title="`企业详情：${detail?.enterprise.name || ''}`" size="640px">
-      <template v-if="detail">
-        <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="企业码">
-            <span class="code-font">{{ detail.enterprise.code }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="状态">
-            {{ ENT_STATUS[detail.enterprise.status]?.label || detail.enterprise.status }}
-          </el-descriptions-item>
-          <el-descriptions-item label="企业管理员">{{ detail.enterprise.ownerLogin || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="席位">{{ detail.members.filter((m) => m.status !== 3).length }} / {{ detail.enterprise.seats }}</el-descriptions-item>
-          <el-descriptions-item label="到期时间">{{ renderTime(detail.enterprise.expireAt) }}</el-descriptions-item>
-          <el-descriptions-item label="创建时间">{{ renderTime(detail.enterprise.createdAt) }}</el-descriptions-item>
-        </el-descriptions>
+    <el-dialog
+      v-model="detailVisible"
+      :title="`企业详情：${detail?.enterprise.name || ''}`"
+      width="960px"
+      top="5vh"
+    >
+      <div v-loading="detailLoading" class="detail-body">
+        <template v-if="detail">
+          <div class="detail-head">
+            <div class="detail-name">{{ detail.enterprise.name }}</div>
+            <span class="code-font detail-code">{{ detail.enterprise.code }}</span>
+            <el-tag size="small" :type="ENT_STATUS[detail.enterprise.status]?.type || 'info'">
+              {{ ENT_STATUS[detail.enterprise.status]?.label || detail.enterprise.status }}
+            </el-tag>
+            <el-tag v-if="detail.enterprise.skuLabel" size="small" effect="plain" type="success">
+              {{ detail.enterprise.skuLabel }}
+            </el-tag>
+          </div>
 
-        <div class="detail-title">
-          成员（{{ detail.members.length }}）
-          <el-button
-            v-if="store.isSuperAdmin"
-            link
-            type="warning"
-            size="small"
-            @click="openSeatDialog(detail.enterprise, true)"
-          >调整席位</el-button>
-        </div>
-        <el-table :data="detail.members" size="small" stripe max-height="440">
-          <el-table-column label="账号" min-width="140">
-            <template #default="{ row }">
-              <div>{{ row.login || `账号#${row.accountId}` }}</div>
-              <div v-if="row.nickname" class="text-secondary">{{ row.nickname }}</div>
-            </template>
-          </el-table-column>
-          <el-table-column label="角色" width="110" align="center">
-            <template #default="{ row }">
-              <el-tag size="small" :type="row.role === 2 ? 'warning' : 'info'" effect="plain">
-                {{ row.role === 2 ? '企业管理员' : '企业成员' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="90" align="center">
-            <template #default="{ row }">
-              <el-tag size="small" :type="row.status === 1 ? 'success' : row.status === 3 ? 'danger' : 'info'">
-                {{ MEMBER_STATUS[row.status] || row.status }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="备注" min-width="120" prop="remark" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.remark || '-' }}</template>
-          </el-table-column>
-          <el-table-column label="加入时间" width="150">
-            <template #default="{ row }"><TimeCell :value="row.createdAt" /></template>
-          </el-table-column>
-        </el-table>
+          <div class="detail-section">
+            <div class="section-title">企业信息</div>
+            <el-descriptions :column="3" border size="small">
+              <el-descriptions-item label="企业 ID">{{ detail.enterprise.id }}</el-descriptions-item>
+              <el-descriptions-item label="企业码">
+                <span class="code-font">{{ detail.enterprise.code }}</span>
+              </el-descriptions-item>
+              <el-descriptions-item label="账号前缀">{{ detail.enterprise.codePrefix }}</el-descriptions-item>
+              <el-descriptions-item label="企业管理员">
+                {{ detail.enterprise.ownerLogin || `账号#${detail.enterprise.ownerAccountId}` }}
+              </el-descriptions-item>
+              <el-descriptions-item label="管理员昵称">{{ detail.enterprise.ownerNickname || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="联系邮箱">{{ detail.enterprise.ownerEmail || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="席位（已用 / 总数）">
+                {{ detail.enterprise.usedSeats }} / {{ detail.enterprise.seats }}
+              </el-descriptions-item>
+              <el-descriptions-item label="到期时间">{{ renderTime(detail.enterprise.expireAt) }}</el-descriptions-item>
+              <el-descriptions-item label="最后登录">{{ renderTime(detail.enterprise.ownerLastLoginAt) }}</el-descriptions-item>
+              <el-descriptions-item label="创建时间">{{ renderTime(detail.enterprise.createdAt) }}</el-descriptions-item>
+              <el-descriptions-item label="更新时间">{{ renderTime(detail.enterprise.updatedAt) }}</el-descriptions-item>
+              <el-descriptions-item label="网络 IP">{{ detail.ipResources.using > 0 ? '已启用' : '未使用' }}</el-descriptions-item>
+            </el-descriptions>
+          </div>
+
+          <div class="detail-section">
+            <div class="section-title">授权与等级</div>
+            <el-descriptions v-if="detail.entitlements" :column="3" border size="small">
+              <el-descriptions-item label="版本">
+                {{ ENT_VERSION_TEXT[detail.entitlements.version] || detail.entitlements.version }}
+              </el-descriptions-item>
+              <el-descriptions-item label="等级">
+                {{ ENT_LEVEL_TEXT[detail.entitlements.level] || detail.entitlements.level }}
+              </el-descriptions-item>
+              <el-descriptions-item label="角色">
+                {{ ENT_ROLE_TEXT[detail.entitlements.role] || detail.entitlements.role }}
+              </el-descriptions-item>
+              <el-descriptions-item label="到期时间">
+                {{ detail.entitlements.permanent ? '永久' : renderTime(detail.entitlements.expireAt) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="席位">{{ detail.entitlements.seats }}</el-descriptions-item>
+              <el-descriptions-item label="当前卡密">{{ detail.entitlements.activeKeyId ? `#${detail.entitlements.activeKeyId}` : '-' }}</el-descriptions-item>
+            </el-descriptions>
+            <el-empty v-else description="暂无授权信息" :image-size="60" />
+          </div>
+
+          <div class="detail-section">
+            <div class="section-title">
+              子账户（{{ detail.members.length }}）
+              <el-button
+                v-if="store.isSuperAdmin"
+                link
+                type="warning"
+                size="small"
+                @click="openSeatDialog(detail.enterprise, true)"
+              >调整席位</el-button>
+            </div>
+            <el-table :data="detail.members" size="small" stripe max-height="300">
+              <el-table-column label="账号" min-width="150">
+                <template #default="{ row }">
+                  <div>{{ row.login || `账号#${row.accountId}` }}</div>
+                  <div v-if="row.nickname" class="text-secondary">{{ row.nickname }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="邮箱" min-width="160" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.email || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="角色" width="100" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.role === 2 ? 'warning' : 'info'" effect="plain">
+                    {{ row.role === 2 ? '企业管理员' : '企业成员' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.status === 1 ? 'success' : row.status === 3 ? 'danger' : 'info'">
+                    {{ MEMBER_STATUS[row.status] || row.status }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="最后登录 IP" width="130">
+                <template #default="{ row }">{{ row.lastLoginIp || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="最后登录" width="150">
+                <template #default="{ row }"><TimeCell :value="row.lastLoginAt" /></template>
+              </el-table-column>
+              <el-table-column label="加入时间" width="150">
+                <template #default="{ row }"><TimeCell :value="row.createdAt" /></template>
+              </el-table-column>
+              <template #empty><el-empty description="暂无子账户" :image-size="60" /></template>
+            </el-table>
+          </div>
+
+          <div class="detail-section">
+            <div class="section-title">绑定激活码（{{ detail.keys.length }}）</div>
+            <el-table :data="detail.keys" size="small" stripe max-height="300">
+              <el-table-column label="卡密" min-width="170">
+                <template #default="{ row }"><span class="code-font">{{ row.code }}</span></template>
+              </el-table-column>
+              <el-table-column label="档位" width="130">
+                <template #default="{ row }">{{ TIER_TEXT[row.tier] || '-' }} · {{ KEY_LEVEL_TEXT[row.level] || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="绑定用户" width="130" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.accountLogin || (row.accountId ? `账号#${row.accountId}` : '-') }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" effect="plain">{{ KEY_STATUS_TEXT[row.status] || row.status }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="绑定时间" width="150">
+                <template #default="{ row }"><TimeCell :value="row.activatedAt || row.usedAt" /></template>
+              </el-table-column>
+              <el-table-column label="到期时间" width="150">
+                <template #default="{ row }"><TimeCell :value="row.accountExpireAt" /></template>
+              </el-table-column>
+              <template #empty><el-empty description="暂无激活码" :image-size="60" /></template>
+            </el-table>
+          </div>
+
+          <div class="detail-section">
+            <div class="section-title">网络 IP 资源</div>
+            <div class="ip-summary">
+              <el-tag size="small" type="info" effect="plain">总数 {{ detail.ipResources.total }}</el-tag>
+              <el-tag size="small" type="success" effect="plain">启用 {{ detail.ipResources.enabled }}</el-tag>
+              <el-tag size="small" type="warning" effect="plain">已分配 {{ detail.ipResources.assigned }}</el-tag>
+              <el-tag size="small" type="primary" effect="plain">使用中 {{ detail.ipResources.using }}</el-tag>
+            </div>
+            <el-table v-if="detail.ipResources.list.length" :data="detail.ipResources.list" size="small" stripe max-height="240">
+              <el-table-column label="主机" min-width="150" prop="host" show-overflow-tooltip />
+              <el-table-column label="端口" width="80" prop="port" />
+              <el-table-column label="协议" width="80" prop="proxyType" />
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.status === 1 ? 'success' : 'info'">
+                    {{ row.status === 1 ? '启用' : '停用' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="健康" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="IP_HEALTH[row.health]?.type || 'info'">
+                    {{ IP_HEALTH[row.health]?.label || row.health }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="分配" width="90" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.assigned ? 'warning' : 'info'" effect="plain">
+                    {{ row.assigned ? '已分配' : '空闲' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="备注" min-width="120" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.remark || '-' }}</template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-else description="该企业未使用网络 IP" :image-size="60" />
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="detailVisible = false">关闭</el-button>
       </template>
-    </el-drawer>
+    </el-dialog>
 
     <!-- 调整席位（仅超管，只增不减） -->
     <el-dialog v-model="seatVisible" title="调整企业席位" width="440px" :close-on-click-modal="false">
@@ -188,6 +317,19 @@ const ENT_STATUS: Record<number, { label: string; type: 'success' | 'info' | 'da
   3: { label: '到期', type: 'danger' },
 }
 const MEMBER_STATUS: Record<number, string> = { 1: '正常', 2: '停用', 3: '已退出' }
+const TIER_TEXT: Record<number, string> = { 1: '个人版', 2: '企业版' }
+const KEY_LEVEL_TEXT: Record<number, string> = { 1: '普通', 2: '高级' }
+const KEY_STATUS_TEXT: Record<number, string> = {
+  0: '未用', 1: '已用', 2: '作废', 3: '过期', 4: '已换机', 5: '已删除',
+}
+const ENT_VERSION_TEXT: Record<string, string> = { none: '未授权', personal: '个人版', enterprise: '企业版' }
+const ENT_LEVEL_TEXT: Record<string, string> = { none: '未授权', normal: '普通', pro: '高级' }
+const ENT_ROLE_TEXT: Record<string, string> = { user: '个人用户', admin: '企业管理员', member: '企业成员' }
+const IP_HEALTH: Record<number, { label: string; type: 'info' | 'success' | 'danger' }> = {
+  1: { label: '未测', type: 'info' },
+  2: { label: '正常', type: 'success' },
+  3: { label: '异常', type: 'danger' },
+}
 
 const query = reactive({ page: 1, pageSize: 20, keyword: '', status: '' as number | '' })
 const list = ref<EnterpriseItem[]>([])
@@ -222,15 +364,19 @@ function reset() {
 
 // ============ 详情 ============
 const detailVisible = ref(false)
+const detailLoading = ref(false)
 const detail = ref<EnterpriseDetail | null>(null)
 
 async function openDetail(row: { id: string }) {
   detailVisible.value = true
   detail.value = null
+  detailLoading.value = true
   try {
     detail.value = await getEnterpriseDetail(row.id)
   } catch {
     detailVisible.value = false
+  } finally {
+    detailLoading.value = false
   }
 }
 
@@ -288,6 +434,45 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.detail-body {
+  max-height: 72vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+
+  .detail-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2d4d;
+  }
+  .detail-code {
+    font-size: 13px;
+  }
+}
+.detail-section {
+  margin-bottom: 18px;
+
+  .section-title {
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1f2d4d;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+}
+.ip-summary {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 .pager {
   display: flex;

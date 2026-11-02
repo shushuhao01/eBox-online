@@ -20,7 +20,7 @@ const routes: RouteRecordRaw[] = [
     redirect: '/dashboard',
     children: [
       { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/Dashboard.vue'), meta: { title: '总览', icon: 'DataAnalysis' } },
-      { path: 'accounts', name: 'Accounts', component: () => import('@/views/Accounts.vue'), meta: { title: '账号管理', icon: 'UserFilled' } },
+      { path: 'accounts', name: 'Accounts', component: () => import('@/views/Accounts.vue'), meta: { title: '用户管理', icon: 'UserFilled' } },
       { path: 'enterprises', name: 'Enterprises', component: () => import('@/views/Enterprises.vue'), meta: { title: '企业管理', icon: 'OfficeBuilding' } },
       { path: 'licenses', name: 'Licenses', component: () => import('@/views/Licenses.vue'), meta: { title: '激活码管理', icon: 'Key' } },
       { path: 'batches', name: 'Batches', component: () => import('@/views/Batches.vue'), meta: { title: '码批次', icon: 'Collection' } },

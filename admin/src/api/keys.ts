@@ -135,8 +135,33 @@ export function exportKeys(params?: Record<string, unknown>) {
 }
 
 /** 激活码详情（含设备列表） */
+export interface KeyDetailAccount {
+  id: string
+  login: string
+  nickname: string | null
+  email: string | null
+  phone: string | null
+  status: number
+}
+
+export interface KeyDetailEnterprise {
+  id: string
+  code: string
+  name: string
+  status: number
+}
+
+export interface KeyDetail {
+  key: LicenseKeyItem
+  devices: KeyDevice[]
+  unbindCount: number
+  unbindTotal: number
+  account: KeyDetailAccount | null
+  enterprise: KeyDetailEnterprise | null
+}
+
 export function getKeyDetail(id: string) {
-  return get<{ key: LicenseKeyItem; devices: KeyDevice[]; unbindCount: number }>(`/keys/${id}`)
+  return get<KeyDetail>(`/keys/${id}`)
 }
 
 /**

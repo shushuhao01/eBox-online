@@ -63,8 +63,9 @@
             <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right" align="center">
+        <el-table-column label="操作" width="290" fixed="right" align="center">
           <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="openView(row)">查看</el-button>
             <el-button
               link
               type="primary"
@@ -204,6 +205,33 @@
           @current-change="loadRecipients"
         />
       </div>
+    </el-dialog>
+
+    <!-- 查看发送内容 -->
+    <el-dialog v-model="viewVisible" title="营销邮件详情" width="760px" top="6vh">
+      <template v-if="viewRow">
+        <div class="view-head">
+          <div class="view-title">{{ viewRow.title }}</div>
+          <div class="view-meta">
+            <el-tag size="small" :type="statusTagType(viewRow.status)">{{ statusLabel(viewRow.status) }}</el-tag>
+            <el-tag size="small" effect="plain">{{ audienceLabel(viewRow.audience_type) }}</el-tag>
+            <span class="view-meta-text">送达 {{ viewRow.sent_count }} / 失败 {{ viewRow.failed_count }} / 已读 {{ viewRow.opened_count || 0 }}</span>
+            <span class="view-meta-text">
+              <TimeCell :value="viewRow.sent_at || viewRow.send_at" />
+            </span>
+          </div>
+        </div>
+        <div class="view-subject">
+          <span class="view-label">邮件主题</span>
+          <span>{{ viewRow.subject || viewRow.title }}</span>
+        </div>
+        <div class="view-label">邮件正文</div>
+        <div v-if="viewRow.content" class="view-content" v-html="viewRow.content"></div>
+        <div v-else class="view-content view-empty">（无正文）</div>
+      </template>
+      <template #footer>
+        <el-button @click="viewVisible = false">关闭</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
@@ -345,6 +373,15 @@ function resetForm() {
 function openCreate() {
   resetForm()
   drawerVisible.value = true
+}
+
+// ============ 查看详情 ============
+const viewVisible = ref(false)
+const viewRow = ref<MarketingCampaignRow | null>(null)
+
+function openView(row: MarketingCampaignRow) {
+  viewRow.value = row
+  viewVisible.value = true
 }
 
 function openEdit(row: MarketingCampaignRow) {
@@ -573,5 +610,59 @@ onMounted(() => {
 
 .recipient-filter {
   margin-bottom: 12px;
+}
+
+.view-head {
+  margin-bottom: 14px;
+}
+.view-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+.view-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.view-meta-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.view-subject {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: #f7f9fc;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-main);
+}
+.view-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.view-content {
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid #eef1f6;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text-main);
+  word-break: break-word;
+
+  :deep(img) {
+    max-width: 100%;
+  }
+}
+.view-empty {
+  color: var(--text-secondary);
 }
 </style>
