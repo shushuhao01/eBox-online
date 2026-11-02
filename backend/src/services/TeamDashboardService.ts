@@ -1,5 +1,6 @@
 import { AppDataSource } from '../config/database';
 import { Enterprise } from '../entities/account/Enterprise';
+import type { Account } from '../entities/account/Account';
 
 /**
  * 团队仪表盘（M5）
@@ -226,6 +227,179 @@ export async function getTeamTrend(enterprise: Enterprise, days: number): Promis
       WHERE enterprise_id = ? AND created_at >= ?
       GROUP BY day`,
     [enterprise.id, startDate]
+  );
+  const blockMap = new Map(blockRows.map((r) => [String(r.day), Number(r.c || 0)]));
+
+  const points: TeamTrendPoint[] = [];
+  const cursor = new Date(start);
+  for (let i = 0; i < span; i++) {
+    const date = toDateString(cursor);
+    const snap = snapshotMap.get(date);
+    points.push({
+      date,
+      envTotal: snap?.envTotal || 0,
+      envRunning: snap?.envRunning || 0,
+      memberOnline: snap?.memberOnline || 0,
+      blockCount: blockMap.get(date) || 0,
+    });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return points;
+}
+
+// ==================== 个人仪表盘（所有版本 / 等级开放） ====================
+// 数据范围仅限当前登录账号本人：设备环境数、个人 IP 池、本人断网拦截。
+
+interface AccountDeviceAggRow {
+  lastActiveAt: string | Date | null;
+  envTotal: number | string;
+  envRunning: number | string;
+  devices: number | string;
+}
+
+async function loadAccountDeviceAgg(accountId: string): Promise<AccountDeviceAggRow> {
+  const rows: AccountDeviceAggRow[] = await AppDataSource.query(
+    `SELECT MAX(last_active_at) AS lastActiveAt,
+            COALESCE(SUM(env_total), 0) AS envTotal,
+            COALESCE(SUM(env_running), 0) AS envRunning,
+            COUNT(*) AS devices
+       FROM account_devices
+      WHERE account_id = ? AND status = 1`,
+    [accountId]
+  );
+  return rows[0] || { lastActiveAt: null, envTotal: 0, envRunning: 0, devices: 0 };
+}
+
+async function loadAccountIpStats(accountId: string): Promise<TeamSummary['ip']> {
+  const resourceRows: Array<{ total: number | string; disabled: number | string; enabled: number | string }> =
+    await AppDataSource.query(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(status = 2), 0) AS disabled,
+              COALESCE(SUM(status = 1), 0) AS enabled
+         FROM ip_resources
+        WHERE scope = 1 AND owner_account_id = ?`,
+      [accountId]
+    );
+  const assignRows: Array<{ assigned: number | string; inUse: number | string }> = await AppDataSource.query(
+    `SELECT COALESCE(SUM(a.status = 1), 0) AS assigned,
+            COALESCE(SUM(a.status = 2), 0) AS inUse
+       FROM ip_assignments a
+       JOIN ip_resources r ON r.id = a.resource_id
+      WHERE a.member_account_id = ? AND r.scope = 1 AND a.status IN (1, 2)`,
+    [accountId]
+  );
+  const total = Number(resourceRows[0]?.total || 0);
+  const disabled = Number(resourceRows[0]?.disabled || 0);
+  const enabled = Number(resourceRows[0]?.enabled || 0);
+  const assigned = Number(assignRows[0]?.assigned || 0);
+  const inUse = Number(assignRows[0]?.inUse || 0);
+  return {
+    total,
+    assigned,
+    inUse,
+    idle: Math.max(0, enabled - assigned - inUse),
+    disabled,
+  };
+}
+
+async function loadAccountBlockCount(accountId: string, since: Date): Promise<number> {
+  const rows: Array<{ c: number | string }> = await AppDataSource.query(
+    'SELECT COUNT(*) AS c FROM proxy_block_events WHERE account_id = ? AND created_at >= ?',
+    [accountId, since]
+  );
+  return Number(rows[0]?.c || 0);
+}
+
+async function upsertAccountTodaySnapshot(
+  accountId: string,
+  env: TeamSummary['env'],
+  online: number,
+  blockCount: number
+): Promise<void> {
+  await AppDataSource.query(
+    `INSERT INTO account_metrics_daily
+       (account_id, stat_date, env_total, env_running, member_online, block_count)
+     VALUES (?, CURDATE(), ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       env_total = VALUES(env_total),
+       env_running = VALUES(env_running),
+       member_online = VALUES(member_online),
+       block_count = VALUES(block_count)`,
+    [accountId, env.total, env.running, online, blockCount]
+  );
+}
+
+/** 个人仪表盘：结构与团队汇总一致，成员维度收敛为「自己」 */
+export async function getAccountSummary(account: Account): Promise<TeamSummary> {
+  const now = Date.now();
+  const device = await loadAccountDeviceAgg(account.id);
+  const lastActive = normalizeDate(device.lastActiveAt);
+  const ts = lastActive ? new Date(lastActive).getTime() : 0;
+  const online = !!ts && now - ts <= ONLINE_WINDOW_MS;
+  const env = { total: Number(device.envTotal || 0), running: Number(device.envRunning || 0) };
+  const ip = await loadAccountIpStats(account.id);
+  const last7d = await loadAccountBlockCount(account.id, new Date(now - 7 * 24 * 3600 * 1000));
+  await upsertAccountTodaySnapshot(account.id, env, online ? 1 : 0, last7d);
+
+  return {
+    members: { total: 1, online: online ? 1 : 0, seats: 1, usedSeats: 1 },
+    env,
+    ip,
+    block: { last7d },
+    ranking: [
+      {
+        accountId: String(account.id),
+        login: account.login || '',
+        nickname: account.nickname || null,
+        online,
+        lastActiveAt: lastActive,
+        envTotal: env.total,
+        envRunning: env.running,
+      },
+    ],
+  };
+}
+
+/** 个人仪表盘趋势：与团队趋势同结构，数据源为 account_metrics_daily */
+export async function getAccountTrend(account: Account, days: number): Promise<TeamTrendPoint[]> {
+  const span = days === 30 ? 30 : 7;
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (span - 1));
+  const startDate = toDateString(start);
+
+  // 确保今天有快照，趋势末点与 summary 一致
+  await getAccountSummary(account);
+
+  const snapshotRows: Array<{
+    stat_date: string;
+    env_total: number | string;
+    env_running: number | string;
+    member_online: number | string;
+  }> = await AppDataSource.query(
+    `SELECT DATE_FORMAT(stat_date, '%Y-%m-%d') AS stat_date,
+            env_total, env_running, member_online
+       FROM account_metrics_daily
+      WHERE account_id = ? AND stat_date >= ?`,
+    [account.id, startDate]
+  );
+  const snapshotMap = new Map(
+    snapshotRows.map((r) => [
+      String(r.stat_date),
+      {
+        envTotal: Number(r.env_total || 0),
+        envRunning: Number(r.env_running || 0),
+        memberOnline: Number(r.member_online || 0),
+      },
+    ])
+  );
+
+  const blockRows: Array<{ day: string; c: number | string }> = await AppDataSource.query(
+    `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS day, COUNT(*) AS c
+       FROM proxy_block_events
+      WHERE account_id = ? AND created_at >= ?
+      GROUP BY day`,
+    [account.id, startDate]
   );
   const blockMap = new Map(blockRows.map((r) => [String(r.day), Number(r.c || 0)]));
 

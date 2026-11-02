@@ -259,6 +259,21 @@ CREATE TABLE IF NOT EXISTS \`team_metrics_daily\` (
   UNIQUE KEY \`uk_team_metrics_daily\` (\`enterprise_id\`, \`stat_date\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
 
+/** 个人指标日快照（个人版仪表盘趋势图数据源；环境数无法回溯，按日 upsert 当日值） */
+const CREATE_ACCOUNT_METRICS_DAILY = `
+CREATE TABLE IF NOT EXISTS \`account_metrics_daily\` (
+  \`id\` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  \`account_id\` BIGINT UNSIGNED NOT NULL,
+  \`stat_date\` DATE NOT NULL,
+  \`env_total\` INT NOT NULL DEFAULT 0,
+  \`env_running\` INT NOT NULL DEFAULT 0,
+  \`member_online\` INT NOT NULL DEFAULT 0,
+  \`block_count\` INT NOT NULL DEFAULT 0,
+  \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  \`updated_at\` DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY \`uk_account_metrics_daily\` (\`account_id\`, \`stat_date\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
+
 const CREATE_APP_CONFIGS = `
 CREATE TABLE IF NOT EXISTS \`app_configs\` (
   \`id\` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -537,6 +552,7 @@ export async function ensureAccountSchema(): Promise<void> {
     await runner.query(CREATE_PROXY_BLOCK_EVENTS);
     await runner.query(CREATE_AGREEMENT_ACCEPTANCES);
     await runner.query(CREATE_TEAM_METRICS_DAILY);
+    await runner.query(CREATE_ACCOUNT_METRICS_DAILY);
     await runner.query(CREATE_APP_CONFIGS);
     await runner.query(CREATE_NOTIFICATION_TEMPLATES);
     await runner.query(CREATE_SYSTEM_MESSAGES);

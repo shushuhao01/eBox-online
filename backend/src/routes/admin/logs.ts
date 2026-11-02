@@ -48,6 +48,17 @@ router.get('/revoke-logs', async (req, res) => {
   ok(res, await paged(qb, req));
 });
 
+// GET /api/admin/operation-logs/actions  动作去重列表（供前端筛选下拉）
+router.get('/operation-logs/actions', async (_req, res) => {
+  const rows = await AppDataSource.getRepository(OperationLog)
+    .createQueryBuilder('t')
+    .select('t.action', 'action')
+    .distinct(true)
+    .orderBy('t.action', 'ASC')
+    .getRawMany<{ action: string }>();
+  ok(res, rows.map((r) => r.action).filter(Boolean));
+});
+
 // GET /api/admin/operation-logs
 router.get('/operation-logs', async (req, res) => {
   const qb = AppDataSource.getRepository(OperationLog).createQueryBuilder('t');

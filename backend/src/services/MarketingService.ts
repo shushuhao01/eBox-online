@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { SelectQueryBuilder } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { MarketingCampaign } from '../entities/account/MarketingCampaign';
 import { MarketingRecipient } from '../entities/account/MarketingRecipient';
@@ -334,23 +335,71 @@ export async function sendCampaign(id: string): Promise<Record<string, unknown>>
   return { scheduled: false, sent: recipients.length };
 }
 
-/** 收件人分页（含送达 / 打开状态） */
+export type RecipientFilter = '' | 'opened' | 'unopened' | 'delivered' | 'failed' | 'pending';
+
+function applyRecipientFilter(qb: SelectQueryBuilder<MarketingRecipient>, status: RecipientFilter): void {
+  switch (status) {
+    case 'opened':
+      qb.andWhere('r.openedAt IS NOT NULL');
+      break;
+    case 'unopened':
+      qb.andWhere('r.delivered = 1 AND r.openedAt IS NULL');
+      break;
+    case 'delivered':
+      qb.andWhere('r.delivered = 1');
+      break;
+    case 'failed':
+      qb.andWhere('r.delivered = 0 AND r.error IS NOT NULL');
+      break;
+    case 'pending':
+      qb.andWhere('r.delivered = 0 AND r.error IS NULL');
+      break;
+    default:
+      break;
+  }
+}
+
+/** 收件人分页（含送达 / 打开状态），status 支持已读 / 未读 / 送达 / 失败 / 待发送筛选 */
 export async function listRecipients(
   id: string,
   page: number,
-  pageSize: number
+  pageSize: number,
+  status: RecipientFilter = ''
 ): Promise<Record<string, unknown>> {
   await requireCampaign(id);
-  const [rows, total] = await recipientRepo().findAndCount({
-    where: { campaignId: id },
-    order: { id: 'DESC' },
-    skip: (page - 1) * pageSize,
-    take: pageSize,
-  });
+
+  const statsRaw = await recipientRepo()
+    .createQueryBuilder('r')
+    .select('COUNT(*)', 'total')
+    .addSelect('SUM(CASE WHEN r.delivered = 1 THEN 1 ELSE 0 END)', 'delivered')
+    .addSelect('SUM(CASE WHEN r.opened_at IS NOT NULL THEN 1 ELSE 0 END)', 'opened')
+    .addSelect('SUM(CASE WHEN r.delivered = 1 AND r.opened_at IS NULL THEN 1 ELSE 0 END)', 'unopened')
+    .addSelect('SUM(CASE WHEN r.delivered = 0 AND r.error IS NOT NULL THEN 1 ELSE 0 END)', 'failed')
+    .addSelect('SUM(CASE WHEN r.delivered = 0 AND r.error IS NULL THEN 1 ELSE 0 END)', 'pending')
+    .where('r.campaignId = :id', { id })
+    .getRawOne<Record<string, string>>();
+
+  const qb = recipientRepo().createQueryBuilder('r').where('r.campaignId = :id', { id });
+  applyRecipientFilter(qb, status);
+  const [rows, total] = await qb
+    .orderBy('r.id', 'DESC')
+    .skip((page - 1) * pageSize)
+    .take(pageSize)
+    .getManyAndCount();
+
+  const stats = {
+    total: Number(statsRaw?.total) || 0,
+    delivered: Number(statsRaw?.delivered) || 0,
+    opened: Number(statsRaw?.opened) || 0,
+    unopened: Number(statsRaw?.unopened) || 0,
+    failed: Number(statsRaw?.failed) || 0,
+    pending: Number(statsRaw?.pending) || 0,
+  };
   return {
     total,
     page,
     pageSize,
+    stats,
     list: rows.map((r) => ({
       id: r.id,
       email: r.email,

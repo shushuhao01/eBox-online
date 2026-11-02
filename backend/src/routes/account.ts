@@ -22,6 +22,7 @@ import {
 } from '../services/LicenseAccountService';
 import { getEntitlements, findEffectiveKey } from '../services/EntitlementService';
 import { reportProxyBlocked } from '../services/ProxyBlockService';
+import { getAccountSummary, getAccountTrend } from '../services/TeamDashboardService';
 import { buildClientConfig } from '../services/SkuService';
 import { redeemUpgradeCode } from '../services/VoucherService';
 import {
@@ -239,6 +240,29 @@ router.post('/account/proxy-blocked', requireAccount, async (req, res) => {
     if (error) return fail(res, `参数错误：${error.message}`, 400);
     await reportProxyBlocked(req.accountAuth!.account, value);
     ok(res, null);
+  } catch (e) {
+    if (e instanceof ApiError) return fail(res, e.message, e.code);
+    throw e;
+  }
+});
+
+// ==================== 个人仪表盘（所有版本 / 等级开放，仅统计本人） ====================
+
+// GET /api/v1/account/dashboard/summary（个人汇总卡 + 本人环境排行）
+router.get('/account/dashboard/summary', requireAccount, async (req, res) => {
+  try {
+    ok(res, await getAccountSummary(req.accountAuth!.account));
+  } catch (e) {
+    if (e instanceof ApiError) return fail(res, e.message, e.code);
+    throw e;
+  }
+});
+
+// GET /api/v1/account/dashboard/trend?days=7|30（个人环境趋势）
+router.get('/account/dashboard/trend', requireAccount, async (req, res) => {
+  try {
+    const days = Number(req.query.days) === 30 ? 30 : 7;
+    ok(res, { days, points: await getAccountTrend(req.accountAuth!.account, days) });
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);
     throw e;

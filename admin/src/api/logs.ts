@@ -64,3 +64,8 @@ export function getRevokeLogs(params: { page?: number; pageSize?: number }) {
 export function getOperationLogs(params: { page?: number; pageSize?: number; action?: string; userId?: string }) {
   return get<PageResult<OperationLog>>('/operation-logs', params)
 }
+
+/** 操作日志动作去重列表（筛选下拉） */
+export function getOperationLogActions() {
+  return get<string[]>('/operation-logs/actions')
+}

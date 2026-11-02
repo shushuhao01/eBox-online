@@ -2,8 +2,8 @@
   <div class="page-container">
     <!-- 工具栏 -->
     <div class="toolbar-card">
-      <el-select v-model="filters.action" placeholder="动作" clearable filterable style="width: 180px" @change="handleSearch">
-        <el-option v-for="a in ACTION_OPTIONS" :key="a" :label="a" :value="a" />
+      <el-select v-model="filters.action" placeholder="动作" clearable filterable style="width: 220px" @change="handleSearch">
+        <el-option v-for="a in actionOptions" :key="a.value" :label="a.label" :value="a.value" />
       </el-select>
       <el-input
         v-model="filters.userId"
@@ -26,16 +26,20 @@
           <template #default="{ row }"><TimeCell :value="row.createdAt" /></template>
         </el-table-column>
         <el-table-column label="用户ID" prop="userId" width="100" align="center" />
-        <el-table-column label="动作" width="130" align="center">
+        <el-table-column label="动作" min-width="150" align="center">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ row.action }}</el-tag>
+            <el-tag size="small" effect="plain" class="action-tag">{{ formatLogAction(row.action) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="目标" min-width="200" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.target || '-' }}</template>
+        <el-table-column label="目标" min-width="180">
+          <template #default="{ row }">
+            <span class="wrap-cell">{{ formatLogTarget(row.target) }}</span>
+          </template>
         </el-table-column>
-        <el-table-column label="详情" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.detail || '-' }}</template>
+        <el-table-column label="详情" min-width="280">
+          <template #default="{ row }">
+            <span class="wrap-cell">{{ formatLogDetail(row.detail) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="IP" width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ formatIp(row.ip) }}</template>
@@ -63,24 +67,13 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { Search, Refresh } from '@element-plus/icons-vue'
-import { getOperationLogs, type OperationLog } from '@/api/logs'
+import { getOperationLogs, getOperationLogActions, type OperationLog } from '@/api/logs'
 import TimeCell from '@/components/TimeCell.vue'
 import { formatIp } from '@/utils/format'
+import { formatLogAction, formatLogDetail, formatLogTarget } from '@/utils/logFormat'
 
-const ACTION_OPTIONS = [
-  '生成激活码',
-  '作废激活码',
-  '恢复激活码',
-  '签发换机码',
-  '踢下线',
-  '修改系统设置',
-  '新建客户',
-  '编辑客户',
-  '停用客户',
-  '新建管理员',
-  '修改密码',
-  '新建批次',
-]
+/** 动作筛选项由后端 distinct 结果生成，避免新增动作后筛不到 */
+const actionOptions = ref<Array<{ value: string; label: string }>>([])
 
 const filters = reactive<{ action: string; userId: string }>({ action: '', userId: '' })
 const list = ref<OperationLog[]>([])
@@ -105,6 +98,18 @@ async function load() {
   }
 }
 
+async function loadActions() {
+  try {
+    const rows = await getOperationLogActions()
+    actionOptions.value = rows
+      .filter((a) => a && a !== 'all')
+      .map((a) => ({ value: a, label: formatLogAction(a) }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN'))
+  } catch {
+    actionOptions.value = []
+  }
+}
+
 function handleSearch() {
   page.value = 1
   load()
@@ -115,11 +120,31 @@ function handleSizeChange() {
   load()
 }
 
-onMounted(load)
+onMounted(() => {
+  loadActions()
+  load()
+})
 </script>
 
 <style scoped lang="scss">
 .toolbar-right {
   margin-left: auto;
+}
+
+/* 动作完整显示：标签允许换行，长动作不再被省略号截断 */
+.action-tag {
+  white-space: normal;
+  height: auto;
+  line-height: 18px;
+  padding: 2px 6px;
+  text-align: left;
+}
+
+/* 目标 / 详情完整展示：长文本自动换行 */
+.wrap-cell {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
 }
 </style>

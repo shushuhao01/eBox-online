@@ -74,7 +74,10 @@ router.post('/campaigns/:id/send', async (req, res) => {
 router.get('/campaigns/:id/recipients', async (req, res) => {
   const page = parsePage(req.query.page, 1);
   const pageSize = Math.min(100, parsePage(req.query.pageSize, 10));
-  ok(res, await listRecipients(req.params.id, page, pageSize));
+  const allowed = ['opened', 'unopened', 'delivered', 'failed', 'pending'];
+  const raw = String(req.query.status || '').trim().toLowerCase();
+  const status = (allowed.includes(raw) ? raw : '') as '' | 'opened' | 'unopened' | 'delivered' | 'failed' | 'pending';
+  ok(res, await listRecipients(req.params.id, page, pageSize, status));
 });
 
 router.get('/audience-suggestions', async (_req, res) => {

@@ -46,8 +46,12 @@
             <span :class="row.failed_count > 0 ? 'count-bad' : 'count-sep'">{{ row.failed_count }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="打开" width="70" align="center">
-          <template #default="{ row }">{{ row.opened_count || 0 }}</template>
+        <el-table-column label="已读 / 未读" width="110" align="center">
+          <template #default="{ row }">
+            <span class="count-ok">{{ row.opened_count || 0 }}</span>
+            <span class="count-sep">/</span>
+            <span class="count-sep">{{ Math.max(0, (row.sent_count || 0) - (row.opened_count || 0)) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="发送时间" width="110">
           <template #default="{ row }">
@@ -75,7 +79,7 @@
               :disabled="row.status === 'SENT'"
               @click="handleSend(row)"
             >发送</el-button>
-            <el-button link type="primary" size="small" @click="openRecipients(row)">收件人</el-button>
+            <el-button link type="primary" size="small" @click="openRecipients(row)">发送用户</el-button>
             <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -143,18 +147,41 @@
       </template>
     </el-drawer>
 
-    <!-- 收件人 -->
-    <el-dialog v-model="recipientsVisible" :title="`收件人：${recipientsTitle}`" width="900px">
-      <el-table v-loading="recipientsLoading" :data="recipients" stripe max-height="420">
+    <!-- 发送用户 -->
+    <el-dialog v-model="recipientsVisible" :title="`发送用户：${recipientsTitle}`" width="980px">
+      <div class="recipient-summary">
+        <div class="stat"><span class="stat-label">总收件人</span><span class="stat-value">{{ recipientStats.total }}</span></div>
+        <div class="stat"><span class="stat-label">已送达</span><span class="stat-value count-ok">{{ recipientStats.delivered }}</span></div>
+        <div class="stat"><span class="stat-label">已读</span><span class="stat-value count-ok">{{ recipientStats.opened }}</span></div>
+        <div class="stat"><span class="stat-label">未读</span><span class="stat-value">{{ recipientStats.unopened }}</span></div>
+        <div class="stat"><span class="stat-label">发送失败</span><span class="stat-value count-bad">{{ recipientStats.failed }}</span></div>
+        <div class="stat"><span class="stat-label">待发送</span><span class="stat-value">{{ recipientStats.pending }}</span></div>
+      </div>
+      <el-radio-group v-model="recipientStatus" size="small" class="recipient-filter" @change="handleRecipientFilter">
+        <el-radio-button value="">全部</el-radio-button>
+        <el-radio-button value="opened">已读</el-radio-button>
+        <el-radio-button value="unopened">未读</el-radio-button>
+        <el-radio-button value="delivered">已送达</el-radio-button>
+        <el-radio-button value="failed">发送失败</el-radio-button>
+        <el-radio-button value="pending">待发送</el-radio-button>
+      </el-radio-group>
+      <el-table v-loading="recipientsLoading" :data="recipients" stripe max-height="400">
         <el-table-column label="邮箱" min-width="200" show-overflow-tooltip prop="email" />
         <el-table-column label="账号" width="130" show-overflow-tooltip>
           <template #default="{ row }">{{ row.username || '-' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="100" align="center">
+        <el-table-column label="送达状态" width="100" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.delivered === 1" size="small" type="success">已送达</el-tag>
             <el-tag v-else-if="row.error" size="small" type="danger">失败</el-tag>
             <el-tag v-else size="small" type="info">待发送</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="阅读状态" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.opened_at" size="small" type="success" effect="plain">已读</el-tag>
+            <el-tag v-else-if="row.delivered === 1" size="small" type="info" effect="plain">未读</el-tag>
+            <span v-else class="count-sep">-</span>
           </template>
         </el-table-column>
         <el-table-column label="发送时间" width="110">
@@ -166,7 +193,7 @@
         <el-table-column label="错误信息" min-width="160" show-overflow-tooltip>
           <template #default="{ row }"><span class="error-text">{{ row.error || '-' }}</span></template>
         </el-table-column>
-        <template #empty><el-empty description="暂无收件人记录" :image-size="70" /></template>
+        <template #empty><el-empty description="暂无发送用户记录" :image-size="70" /></template>
       </el-table>
       <div class="pagination-wrap">
         <el-pagination
@@ -195,6 +222,7 @@ import {
   getAudienceSuggestions,
   type MarketingCampaignRow,
   type MarketingRecipientRow,
+  type RecipientStats,
   type AudienceSuggestions,
 } from '@/api/marketing'
 import TimeCell from '@/components/TimeCell.vue'
@@ -415,7 +443,7 @@ async function handleDelete(row: MarketingCampaignRow) {
   await load()
 }
 
-// ============ 收件人 ============
+// ============ 发送用户 ============
 const recipientsVisible = ref(false)
 const recipientsLoading = ref(false)
 const recipients = ref<MarketingRecipientRow[]>([])
@@ -424,13 +452,22 @@ const recipientsCampaignId = ref('')
 const recipientsPage = ref(1)
 const recipientsPageSize = ref(10)
 const recipientsTotal = ref(0)
+const recipientStatus = ref('')
+const recipientStats = ref<RecipientStats>({ total: 0, delivered: 0, opened: 0, unopened: 0, failed: 0, pending: 0 })
 
 async function openRecipients(row: MarketingCampaignRow) {
   recipientsCampaignId.value = row.id
   recipientsTitle.value = row.title
   recipientsPage.value = 1
+  recipientStatus.value = ''
+  recipientStats.value = { total: 0, delivered: 0, opened: 0, unopened: 0, failed: 0, pending: 0 }
   recipientsVisible.value = true
   await loadRecipients()
+}
+
+function handleRecipientFilter() {
+  recipientsPage.value = 1
+  loadRecipients()
 }
 
 async function loadRecipients() {
@@ -440,9 +477,11 @@ async function loadRecipients() {
     const res = await getRecipients(recipientsCampaignId.value, {
       page: recipientsPage.value,
       pageSize: recipientsPageSize.value,
+      status: recipientStatus.value || undefined,
     })
     recipients.value = res.list
     recipientsTotal.value = res.total
+    if (res.stats) recipientStats.value = res.stats
   } finally {
     recipientsLoading.value = false
   }
@@ -501,5 +540,38 @@ onMounted(() => {
 .error-text {
   color: var(--danger-color);
   font-size: 12px;
+}
+
+/* 发送用户弹窗：统计条 + 已读/未读筛选 */
+.recipient-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: var(--bg-secondary, #f5f7fa);
+  border-radius: 6px;
+}
+
+.recipient-summary .stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 60px;
+}
+
+.recipient-summary .stat-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.recipient-summary .stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.recipient-filter {
+  margin-bottom: 12px;
 }
 </style>

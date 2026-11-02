@@ -474,8 +474,19 @@ export async function clientUnbind(
       status: 0,
       createdBy: key.createdBy,
       customerId: key.customerId,
+      batchId: key.batchId,
       remark: key.remark,
       convertFromKeyId: key.id,
+      // 换机码必须继承原码的授权档位：码文本不编码版本/级别/席位，
+      // 客户端激活后展示完全依赖服务端这条记录；漏拷会被默认成个人/普通/1 席。
+      tier: key.tier,
+      level: key.level,
+      seats: key.seats,
+      tierCode: key.tierCode,
+      skuId: key.skuId,
+      accountId: key.accountId,
+      enterpriseId: key.enterpriseId,
+      durationDays: key.durationDays,
     })
   );
 
@@ -581,8 +592,18 @@ export async function convertToSwitchKey(keyId: string, operatorId: string): Pro
       status: 0,
       createdBy: operatorId,
       customerId: key.customerId,
+      batchId: key.batchId,
       remark: key.remark,
       convertFromKeyId: key.id,
+      // 同 clientUnbind：换机码继承原码版本/级别/席位，避免激活后档位错配
+      tier: key.tier,
+      level: key.level,
+      seats: key.seats,
+      tierCode: key.tierCode,
+      skuId: key.skuId,
+      accountId: key.accountId,
+      enterpriseId: key.enterpriseId,
+      durationDays: key.durationDays,
     })
   );
   key.status = 4;

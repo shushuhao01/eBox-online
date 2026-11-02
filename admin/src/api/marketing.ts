@@ -43,6 +43,20 @@ export interface AudienceSuggestions {
   usernames: string[]
 }
 
+/** 收件人统计（与筛选无关，始终返回整批统计） */
+export interface RecipientStats {
+  total: number
+  delivered: number
+  opened: number
+  unopened: number
+  failed: number
+  pending: number
+}
+
+export interface RecipientPage extends PageResult<MarketingRecipientRow> {
+  stats: RecipientStats
+}
+
 export function getCampaigns(params: { page?: number; pageSize?: number; keyword?: string; status?: string } = {}) {
   return get<PageResult<MarketingCampaignRow>>('/marketing/campaigns', params as Record<string, unknown>)
 }
@@ -63,8 +77,11 @@ export function sendCampaign(id: string) {
   return post<{ scheduled: boolean; sent?: number; send_at?: string }>(`/marketing/campaigns/${id}/send`)
 }
 
-export function getRecipients(id: string, params: { page?: number; pageSize?: number } = {}) {
-  return get<PageResult<MarketingRecipientRow>>(`/marketing/campaigns/${id}/recipients`, params as Record<string, unknown>)
+export function getRecipients(
+  id: string,
+  params: { page?: number; pageSize?: number; status?: string } = {},
+) {
+  return get<RecipientPage>(`/marketing/campaigns/${id}/recipients`, params as Record<string, unknown>)
 }
 
 export function getAudienceSuggestions() {
