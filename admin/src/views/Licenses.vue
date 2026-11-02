@@ -17,6 +17,14 @@
       <el-select v-model="filters.type" placeholder="类型" clearable style="width: 120px" @change="handleSearch">
         <el-option v-for="(v, k) in KEY_TYPE" :key="k" :label="v.label" :value="Number(k)" />
       </el-select>
+      <el-select v-model="filters.tier" placeholder="版本" clearable style="width: 110px" @change="handleSearch">
+        <el-option label="个人" :value="1" />
+        <el-option label="企业" :value="2" />
+      </el-select>
+      <el-select v-model="filters.level" placeholder="级别" clearable style="width: 110px" @change="handleSearch">
+        <el-option label="普通" :value="1" />
+        <el-option label="高级" :value="2" />
+      </el-select>
       <el-date-picker
         v-model="dateRange"
         type="daterange"
@@ -63,6 +71,14 @@
             <el-tag :type="KEY_TYPE[row.type]?.type || 'info'" size="small">{{ KEY_TYPE[row.type]?.label || row.type }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="档位" width="140" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.tier === 2 ? 'warning' : 'info'" effect="plain">
+              {{ row.tier === 2 ? '企业' : '个人' }} · {{ row.level === 2 ? '高级' : '普通' }}
+            </el-tag>
+            <span v-if="row.tier === 2" class="seat-sub text-secondary">{{ row.seats }} 席</span>
+          </template>
+        </el-table-column>
         <el-table-column label="时长 / 到期" width="210">
           <template #default="{ row }">
             <template v-if="row.type === 1">
@@ -96,6 +112,12 @@
         </el-table-column>
         <el-table-column label="客户ID" width="90" align="center">
           <template #default="{ row }">{{ row.customerId || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="绑定账号" width="100" align="center">
+          <template #default="{ row }">{{ row.accountId ? `账号#${row.accountId}` : '-' }}</template>
+        </el-table-column>
+        <el-table-column label="所属企业" width="100" align="center">
+          <template #default="{ row }">{{ row.enterpriseId ? `企业#${row.enterpriseId}` : '-' }}</template>
         </el-table-column>
         <el-table-column label="首次激活" width="110">
           <template #default="{ row }"><TimeCell :value="row.usedAt" /></template>
@@ -178,6 +200,23 @@
           <el-radio-group v-model="genForm.bindMode">
             <el-radio-button v-for="m in bindModes" :key="m.value" :value="m.value">{{ m.label }}</el-radio-button>
           </el-radio-group>
+        </el-form-item>
+        <el-form-item label="版本 / 级别">
+          <el-radio-group v-model="genForm.version" style="margin-right: 18px">
+            <el-radio-button :value="1">个人</el-radio-button>
+            <el-radio-button :value="2">企业</el-radio-button>
+          </el-radio-group>
+          <el-radio-group v-model="genForm.level">
+            <el-radio-button :value="1">普通</el-radio-button>
+            <el-radio-button :value="2">高级</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="席位">
+          <el-input-number v-model="genForm.seats" :min="1" :max="1000" :disabled="genForm.version !== 2" />
+          <span class="text-secondary" style="margin-left: 8px">（企业版填席位总数；个人版固定 1）</span>
+        </el-form-item>
+        <el-form-item label="档位编码">
+          <el-input v-model="genForm.tierCode" placeholder="可选，对应套餐 SKU 编码" maxlength="32" style="width: 300px" />
         </el-form-item>
         <el-form-item label="数量" required>
           <el-input-number v-model="genForm.count" :min="1" :max="500" />
@@ -270,7 +309,14 @@
           <el-descriptions-item label="绑定">
             {{ detail.key.bound === 1 ? '绑定' : '通用' }} / {{ formatUnbindMax(detail.key.unbindMax) }}
           </el-descriptions-item>
+          <el-descriptions-item label="档位">
+            {{ detail.key.tier === 2 ? '企业' : '个人' }} · {{ detail.key.level === 2 ? '高级' : '普通' }}
+            <span v-if="detail.key.tier === 2"> / {{ detail.key.seats }} 席</span>
+            <span v-if="detail.key.tierCode" class="text-secondary"> / {{ detail.key.tierCode }}</span>
+          </el-descriptions-item>
           <el-descriptions-item label="客户ID">{{ detail.key.customerId || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="绑定账号">{{ detail.key.accountId ? `账号#${detail.key.accountId}` : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="所属企业">{{ detail.key.enterpriseId ? `企业#${detail.key.enterpriseId}` : '-' }}</el-descriptions-item>
           <el-descriptions-item label="批次ID">{{ detail.key.batchId || '-' }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ formatTime(detail.key.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="使用时间">{{ formatTime(detail.key.usedAt) }}</el-descriptions-item>
@@ -335,11 +381,15 @@ const filters = reactive<{
   status: number | string
   type: number | string
   duration: number | string
+  tier: number | string
+  level: number | string
 }>({
   search: '',
   status: '',
   type: '',
   duration: '',
+  tier: '',
+  level: '',
 })
 const dateRange = ref<[string, string] | null>(null)
 
@@ -357,6 +407,8 @@ async function load() {
       pageSize: pageSize.value,
       status: filters.status,
       type: filters.type,
+      tier: filters.tier,
+      level: filters.level,
       start: dateRange.value?.[0] || '',
       end: dateRange.value?.[1] || '',
       search: filters.search,
@@ -378,6 +430,8 @@ function handleReset() {
   filters.status = ''
   filters.type = ''
   filters.duration = ''
+  filters.tier = ''
+  filters.level = ''
   dateRange.value = null
   handleSearch()
 }
@@ -507,6 +561,10 @@ const genForm = reactive({
   customerId: null as string | null,
   batchId: null as string | null,
   remark: '',
+  version: 1,
+  level: 1,
+  seats: 1,
+  tierCode: '',
 })
 
 const customDays = ref(30)
@@ -563,6 +621,10 @@ function resetGenerateForm() {
   genForm.customerId = null
   genForm.batchId = null
   genForm.remark = ''
+  genForm.version = 1
+  genForm.level = 1
+  genForm.seats = 1
+  genForm.tierCode = ''
   customDays.value = 30
   customMode.value = false
 }
@@ -594,6 +656,10 @@ async function submitGenerate() {
     batchId: isExistingBatch ? String(picked) : null,
     batchName: !isExistingBatch && picked ? String(picked) : null,
     remark: genForm.remark || null,
+    version: genForm.version,
+    level: genForm.level,
+    seats: genForm.version === 2 ? genForm.seats : 1,
+    tierCode: genForm.tierCode.trim() || null,
   }
   generating.value = true
   try {
@@ -767,6 +833,12 @@ onMounted(() => {
 
 .text-secondary {
   color: var(--text-secondary);
+}
+
+.seat-sub {
+  display: block;
+  font-size: 12px;
+  margin-top: 2px;
 }
 
 .duration-cell {

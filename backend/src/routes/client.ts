@@ -6,6 +6,9 @@ import { clientActivate, clientHeartbeat, clientUnbind, findByCode, keyWithDetai
 import { decodeAndVerify } from '../crypto/licenseCodec';
 import { getConfigValue } from '../services/ConfigService';
 import { getAgencyPayload } from '../services/AgencyService';
+import { authenticateToken } from '../services/AccountService';
+import { getEntitlements } from '../services/EntitlementService';
+import { updateDeviceEnvStats } from '../services/DeviceStatsService';
 import { AppDataSource } from '../config/database';
 import { Device } from '../entities/Device';
 
@@ -37,6 +40,10 @@ const bodySchema = Joi.object({
   os: Joi.string().allow('').max(128).default(''),
   timestamp: Joi.number().integer().required(),
   nonce: Joi.string().required().max(64),
+  // M5 环境统计（可选）：旧客户端不传时保持库中原值
+  envTotal: Joi.number().integer().min(0).max(100000),
+  envRunning: Joi.number().integer().min(0).max(100000),
+  boundResourceIds: Joi.array().items(Joi.string().max(64)).max(500),
 });
 
 // POST /api/v1/activate
@@ -73,7 +80,28 @@ router.post('/heartbeat', async (req, res) => {
       clientTime: value.timestamp,
     });
     // 代理商列表随心跳兜底下发（SSE 断线时仍能同步；客户端缺字段时保留本地缓存）
-    ok(res, { ...result, agencies: await getAgencyPayload() });
+    const payload: Record<string, unknown> = { ...result, agencies: await getAgencyPayload() };
+    // 账号体系：已登录客户端随心跳对齐权益（无 token 的旧客户端不受影响）
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    if (token) {
+      try {
+        const auth = await authenticateToken(token);
+        if (auth) {
+          payload.entitlements = await getEntitlements(auth.account);
+          // 环境统计随心跳落库（团队仪表盘数据源）；字段缺失/校验失败不影响心跳
+          await updateDeviceEnvStats(auth.account, {
+            machineFp: value.machineFp,
+            envTotal: value.envTotal,
+            envRunning: value.envRunning,
+            boundResourceIds: value.boundResourceIds,
+          });
+        }
+      } catch {
+        /* 权益下发 / 统计落库失败不影响心跳主流程 */
+      }
+    }
+    ok(res, payload);
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);
     throw e;

@@ -1,0 +1,1089 @@
+import net from 'net';
+import { AppDataSource } from '../config/database';
+import { Account } from '../entities/account/Account';
+import { AccountDevice } from '../entities/account/AccountDevice';
+import { Enterprise } from '../entities/account/Enterprise';
+import { EnterpriseMember } from '../entities/account/EnterpriseMember';
+import { IpAssignment } from '../entities/account/IpAssignment';
+import { IpPoolSetting } from '../entities/account/IpPoolSetting';
+import { IpResource } from '../entities/account/IpResource';
+import { ApiError } from '../middleware/errorHandler';
+import { decryptSecret, encryptSecret } from '../utils/accountCrypto';
+import { getEntitlements } from './EntitlementService';
+import { EnterpriseContext, requireEnterpriseAdmin } from './EnterpriseService';
+import { writeOperationLog } from './LogService';
+
+/**
+ * IP 资源池与分配（M4）
+ * - 平台不预置任何资源，池子初始为空，全部由用户自行导入
+ * - 归属：个人池 scope=1 + owner_account_id；企业池 scope=2 + enterprise_id
+ * - 导入分三段：parse（预览校验）→ test（连通测试）→ commit（仅提交通过行）
+ * - 唯一占用：ip_assignments.resource_id 唯一 + 事务，并发绑定只有一个成功
+ */
+
+const resourceRepo = () => AppDataSource.getRepository(IpResource);
+const assignmentRepo = () => AppDataSource.getRepository(IpAssignment);
+const settingRepo = () => AppDataSource.getRepository(IpPoolSetting);
+const memberRepo = () => AppDataSource.getRepository(EnterpriseMember);
+const enterpriseRepo = () => AppDataSource.getRepository(Enterprise);
+const accountRepo = () => AppDataSource.getRepository(Account);
+const deviceRepo = () => AppDataSource.getRepository(AccountDevice);
+
+const TEST_TIMEOUT_MS = 5000;
+const TEST_CONCURRENCY = 5;
+const STALE_BIND_MS = 10 * 60 * 1000;
+const MAX_COMMIT_ROWS = 500;
+
+export type IpProxyType = 'socks5' | 'http';
+
+export interface IpRowInput {
+  line?: number;
+  proxyType?: string;
+  host?: string;
+  port?: number | string;
+  username?: string;
+  password?: string;
+  remark?: string;
+  /** 客户端已通过连通测试 */
+  testedOk?: boolean;
+  /** 重复资源是否覆盖 */
+  overwrite?: boolean;
+  latencyMs?: number;
+}
+
+export interface IpRowPreview {
+  line: number;
+  proxyType: IpProxyType | '';
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  remark: string;
+  valid: boolean;
+  error: string;
+  duplicate: boolean;
+  duplicateId: string | null;
+  duplicateAction: 'skip' | 'overwrite';
+}
+
+export interface IpPoolContext {
+  scope: 1 | 2;
+  ownerAccountId: string;
+  enterpriseId: string;
+  role: 'user' | 'admin' | 'member';
+  storageMode: number;
+  enterprise: Enterprise | null;
+}
+
+/** 资源列表展示（密码永不下发；成员开启明文可见时下发解密后的账号密码） */
+export interface IpResourceView {
+  id: string;
+  scope: number;
+  proxyType: string;
+  host: string;
+  port: number;
+  username: string;
+  usernameMasked: string;
+  password: string;
+  hasPassword: boolean;
+  remark: string;
+  status: number;
+  health: number;
+  latencyMs: number | null;
+  lastCheckAt: string | null;
+  createdAt: string | null;
+  plaintextVisible: boolean;
+  assigned: boolean;
+  inUse: boolean;
+  envId: string | null;
+  envName: string | null;
+  boundAt: string | null;
+  memberAccountId: string | null;
+  memberLogin: string | null;
+  memberNickname: string | null;
+}
+
+function maskAccountName(name: string): string {
+  if (!name) return '';
+  if (name.length <= 2) return '***';
+  return `${name.slice(0, 1)}***${name.slice(-1)}`;
+}
+
+function toIso(d: Date | null | undefined): string | null {
+  return d ? d.toISOString() : null;
+}
+
+const PROXY_TYPES = new Set(['socks5', 'http']);
+
+function normalizeProxyType(raw: string): IpProxyType | '' {
+  const v = (raw || '').trim().toLowerCase();
+  if (v === 'socks5' || v === 'socks') return 'socks5';
+  if (v === 'http' || v === 'https') return 'http';
+  return '';
+}
+
+function isValidHost(host: string): boolean {
+  if (!host || host.length > 128) return false;
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
+    return host.split('.').every((p) => Number(p) >= 0 && Number(p) <= 255);
+  }
+  // 域名：字母数字与 - .，不能以 - 开头结尾
+  return /^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(host);
+}
+
+/** 拆分一行：支持英文逗号 / 中文逗号 / Tab，最多 6 列 */
+function splitRow(line: string): string[] {
+  const parts = line.split(/\t|,|，/).map((s) => s.trim());
+  return parts.slice(0, 6);
+}
+
+function buildRow(raw: string, lineNo: number): IpRowPreview {
+  const cols = splitRow(raw);
+  const row: IpRowPreview = {
+    line: lineNo,
+    proxyType: '',
+    host: '',
+    port: 0,
+    username: '',
+    password: '',
+    remark: '',
+    valid: false,
+    error: '',
+    duplicate: false,
+    duplicateId: null,
+    duplicateAction: 'skip',
+  };
+  if (!cols.length || !cols[0]) {
+    row.error = '内容为空';
+    return row;
+  }
+  // 允许省略“类型”列：首列不是 socks5/http 时按 地址,端口,账号,密码,备注 解析
+  const first = normalizeProxyType(cols[0]);
+  let rest: string[];
+  if (first) {
+    row.proxyType = first;
+    rest = cols.slice(1);
+  } else if (cols[0].includes('.') || cols[0].includes(':') || /^[a-zA-Z]/.test(cols[0])) {
+    row.proxyType = 'socks5';
+    rest = cols;
+  } else {
+    row.error = '类型只能为 socks5 或 http';
+    return row;
+  }
+  if (rest.length < 2) {
+    row.error = '格式应为：类型,地址,端口,账号,密码,备注';
+    return row;
+  }
+  row.host = rest[0] || '';
+  row.port = Number(rest[1] || 0);
+  row.username = rest[2] || '';
+  row.password = rest[3] || '';
+  row.remark = rest[4] || '';
+
+  if (!isValidHost(row.host)) {
+    row.error = '地址格式不正确（只填 IP 或域名）';
+  } else if (!Number.isInteger(row.port) || row.port < 1 || row.port > 65535) {
+    row.error = '端口必须是 1-65535 的整数';
+  } else if (row.username.length > 128) {
+    row.error = '账号长度不能超过 128';
+  } else if (row.password.length > 256) {
+    row.error = '密码长度不能超过 256';
+  } else if (row.remark.length > 255) {
+    row.error = '备注长度不能超过 255';
+  } else {
+    row.valid = true;
+  }
+  return row;
+}
+
+/** 读取/初始化资源池设置（企业固定持久化） */
+async function getPoolSetting(ownerType: 1 | 2, ownerId: string): Promise<IpPoolSetting> {
+  const repo = settingRepo();
+  let row = await repo.findOneBy({ ownerType, ownerId });
+  if (!row) {
+    row = await repo.save(repo.create({ ownerType, ownerId, storageMode: 1 }));
+  }
+  if (ownerType === 2 && row.storageMode !== 1) {
+    row.storageMode = 1;
+    row = await repo.save(row);
+  }
+  return row;
+}
+
+/** 管理侧上下文：个人高级 / 企业管理员 */
+async function resolvePoolForManage(account: Account): Promise<IpPoolContext> {
+  if (account.enterpriseId) {
+    const ctx = await requireEnterpriseAdmin(account);
+    await getPoolSetting(2, ctx.enterprise.id);
+    return {
+      scope: 2,
+      ownerAccountId: '0',
+      enterpriseId: ctx.enterprise.id,
+      role: 'admin',
+      storageMode: 1,
+      enterprise: ctx.enterprise,
+    };
+  }
+  const ent = await getEntitlements(account);
+  if (!ent.caps.ipResources) {
+    throw new ApiError('当前套餐不支持 IP 资源管理，请升级后使用', 4030, 403, { cap: 'ipResources' });
+  }
+  const setting = await getPoolSetting(1, account.id);
+  return {
+    scope: 1,
+    ownerAccountId: account.id,
+    enterpriseId: '0',
+    role: 'user',
+    storageMode: setting.storageMode,
+    enterprise: null,
+  };
+}
+
+/** 读取侧上下文：企业成员也可（只能看分配给自己的资源） */
+async function resolvePoolForRead(account: Account): Promise<IpPoolContext> {
+  if (account.enterpriseId) {
+    const member = await memberRepo().findOneBy({ accountId: account.id, enterpriseId: account.enterpriseId });
+    if (!member || member.status !== 1) throw new ApiError('企业成员不存在或已停用', 4004, 403);
+    const enterprise = await enterpriseRepo().findOneBy({ id: account.enterpriseId });
+    return {
+      scope: 2,
+      ownerAccountId: '0',
+      enterpriseId: account.enterpriseId,
+      role: member.role === 1 ? 'admin' : 'member',
+      storageMode: 1,
+      enterprise: enterprise ?? null,
+    };
+  }
+  const ent = await getEntitlements(account);
+  if (!ent.caps.ipResources) {
+    throw new ApiError('当前套餐不支持 IP 资源，请升级后使用', 4030, 403, { cap: 'ipResources' });
+  }
+  const setting = await getPoolSetting(1, account.id);
+  return {
+    scope: 1,
+    ownerAccountId: account.id,
+    enterpriseId: '0',
+    role: 'user',
+    storageMode: setting.storageMode,
+    enterprise: null,
+  };
+}
+
+/** 当前账号可见的资源查询（不含分页） */
+function visibleResourceQuery(ctx: IpPoolContext, account: Account) {
+  const qb = resourceRepo().createQueryBuilder('r');
+  if (ctx.scope === 1) {
+    qb.where('r.scope = 1 AND r.owner_account_id = :ownerId', { ownerId: ctx.ownerAccountId });
+  } else if (ctx.role === 'member') {
+    qb.innerJoin(IpAssignment, 'a', 'a.resource_id = r.id')
+      .where('r.scope = 2 AND r.enterprise_id = :entId', { entId: ctx.enterpriseId })
+      .andWhere('a.member_account_id = :memberId', { memberId: account.id })
+      .andWhere('a.status IN (1,2)');
+  } else {
+    qb.where('r.scope = 2 AND r.enterprise_id = :entId', { entId: ctx.enterpriseId });
+  }
+  return qb;
+}
+
+/** 存量资源去重键集合 */
+async function existingResourceMap(ctx: IpPoolContext): Promise<Map<string, IpResource>> {
+  const rows = await resourceRepo()
+    .createQueryBuilder('r')
+    .where('r.scope = :scope', { scope: ctx.scope })
+    .andWhere('r.owner_account_id = :ownerId', { ownerId: ctx.ownerAccountId })
+    .andWhere('r.enterprise_id = :entId', { entId: ctx.enterpriseId })
+    .getMany();
+  return new Map(rows.map((r) => [`${r.host}|${r.port}|${r.username}`, r]));
+}
+
+function keyOf(host: string, port: number, username: string): string {
+  return `${host}|${port}|${username}`;
+}
+
+/** 三段式第 1 段：解析 + 逐行校验 + 重复标记（不入库） */
+export async function parseIpRows(
+  account: Account,
+  text: string
+): Promise<{ rows: IpRowPreview[]; validCount: number; errorCount: number; duplicateCount: number }> {
+  const ctx = await resolvePoolForManage(account);
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (!lines.length) throw new ApiError('请粘贴或上传资源内容', 400);
+  if (lines.length > MAX_COMMIT_ROWS) throw new ApiError(`单次最多导入 ${MAX_COMMIT_ROWS} 条`, 400);
+
+  const existing = await existingResourceMap(ctx);
+  const rows = lines.map((line, idx) => {
+    const row = buildRow(line, idx + 1);
+    if (row.valid) {
+      const hit = existing.get(keyOf(row.host, row.port, row.username));
+      if (hit) {
+        row.duplicate = true;
+        row.duplicateId = hit.id;
+        row.duplicateAction = 'skip';
+      }
+    }
+    return row;
+  });
+  return {
+    rows,
+    validCount: rows.filter((r) => r.valid).length,
+    errorCount: rows.filter((r) => !r.valid).length,
+    duplicateCount: rows.filter((r) => r.duplicate).length,
+  };
+}
+
+interface ProbeResult {
+  ok: boolean;
+  latencyMs: number;
+  error: string;
+}
+
+/** SOCKS5 / HTTP 代理握手（5s 超时） */
+function probeProxy(
+  proxyType: IpProxyType,
+  host: string,
+  port: number,
+  username: string,
+  password: string
+): Promise<ProbeResult> {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    let settled = false;
+    let buffer = Buffer.alloc(0);
+    let stage = 0;
+    const socket = net.createConnection({ host, port });
+    socket.setTimeout(TEST_TIMEOUT_MS);
+
+    const finish = (ok: boolean, error = '') => {
+      if (settled) return;
+      settled = true;
+      const latencyMs = Date.now() - started;
+      try {
+        socket.destroy();
+      } catch {
+        /* ignore */
+      }
+      resolve({ ok, latencyMs, error });
+    };
+
+    socket.on('timeout', () => finish(false, '连接超时（5 秒）'));
+    socket.on('error', (e) => finish(false, `连接失败：${e.message}`));
+
+    socket.on('connect', () => {
+      if (proxyType === 'socks5') {
+        const methods = username ? [0x00, 0x02] : [0x00];
+        socket.write(Buffer.from([0x05, methods.length, ...methods]));
+      } else {
+        let head = 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nProxy-Connection: keep-alive\r\n';
+        if (username) {
+          head += `Proxy-Authorization: Basic ${Buffer.from(`${username}:${password}`, 'utf8').toString('base64')}\r\n`;
+        }
+        head += '\r\n';
+        socket.write(head, 'latin1');
+      }
+    });
+
+    socket.on('data', (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+
+      if (proxyType === 'http') {
+        const text = buffer.toString('latin1');
+        const end = text.indexOf('\r\n\r\n');
+        if (end < 0 && buffer.length < 8192) return;
+        const statusLine = text.split('\r\n')[0] || '';
+        const m = statusLine.match(/HTTP\/\d\.\d\s+(\d{3})/);
+        if (!m) return finish(false, '代理返回内容无法识别');
+        const status = Number(m[1]);
+        if (status === 200) return finish(true);
+        if (status === 407) return finish(false, '代理认证失败（账号或密码错误）');
+        return finish(false, `代理返回 HTTP ${status}`);
+      }
+
+      if (stage === 0) {
+        if (buffer.length < 2) return;
+        const ver = buffer[0];
+        const method = buffer[1];
+        buffer = buffer.subarray(2);
+        if (ver !== 0x05) return finish(false, '不是 SOCKS5 代理');
+        if (method === 0x00) {
+          stage = 2;
+          sendSocksConnect();
+        } else if (method === 0x02) {
+          const u = Buffer.from(username, 'utf8');
+          const p = Buffer.from(password, 'utf8');
+          socket.write(Buffer.concat([Buffer.from([0x01, u.length]), u, Buffer.from([p.length]), p]));
+          stage = 1;
+        } else if (method === 0xff) {
+          return finish(false, '代理不接受当前认证方式');
+        }
+        return;
+      }
+      if (stage === 1) {
+        if (buffer.length < 2) return;
+        const status = buffer[1];
+        buffer = buffer.subarray(2);
+        if (status !== 0x00) return finish(false, '代理认证失败（账号或密码错误）');
+        stage = 2;
+        sendSocksConnect();
+        return;
+      }
+      if (stage === 2) {
+        if (buffer.length < 4) return;
+        const rep = buffer[1];
+        const atyp = buffer[3];
+        let need = 4;
+        if (atyp === 0x01) need = 4 + 4 + 2;
+        else if (atyp === 0x04) need = 4 + 16 + 2;
+        else if (atyp === 0x03) need = 4 + 1 + (buffer[4] || 0) + 2;
+        if (buffer.length < need) return;
+        buffer = buffer.subarray(need);
+        if (rep !== 0x00) {
+          const reasons: Record<number, string> = {
+            1: '代理服务器错误',
+            2: '代理规则不允许连接',
+            3: '网络不可达',
+            4: '目标主机不可达',
+            5: '目标拒绝连接',
+            6: 'TTL 过期',
+            7: '不支持的命令',
+            8: '不支持的地址类型',
+          };
+          return finish(false, reasons[rep] || `SOCKS5 握手失败（${rep}）`);
+        }
+        return finish(true);
+      }
+    });
+
+    function sendSocksConnect() {
+      const hostBuf = Buffer.from('example.com', 'utf8');
+      socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00, 0x03, hostBuf.length]), hostBuf, Buffer.from([0x01, 0xbb])]));
+    }
+  });
+}
+
+/** 并发执行（上限 5） */
+async function runWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      results[idx] = await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+export interface IpTestResult {
+  line: number;
+  ok: boolean;
+  latencyMs: number;
+  error: string;
+}
+
+/** 三段式第 2 段：连通测试（不入库） */
+export async function testIpRows(account: Account, rows: IpRowInput[]): Promise<{ results: IpTestResult[]; passCount: number; failCount: number }> {
+  await resolvePoolForManage(account);
+  const list = Array.isArray(rows) ? rows.slice(0, MAX_COMMIT_ROWS) : [];
+  if (!list.length) throw new ApiError('请先提供待测试的资源', 400);
+  const results = await runWithConcurrency(list, TEST_CONCURRENCY, async (row) => {
+    const proxyType = normalizeProxyType(String(row.proxyType || 'socks5')) || 'socks5';
+    const host = String(row.host || '').trim();
+    const port = Number(row.port || 0);
+    const line = Number(row.line || 0);
+    if (!isValidHost(host) || !Number.isInteger(port) || port < 1 || port > 65535) {
+      return { line, ok: false, latencyMs: 0, error: '地址或端口格式不正确' };
+    }
+    const probe = await probeProxy(proxyType, host, port, String(row.username || ''), String(row.password || ''));
+    return { line, ok: probe.ok, latencyMs: probe.latencyMs, error: probe.error };
+  });
+  return {
+    results,
+    passCount: results.filter((r) => r.ok).length,
+    failCount: results.filter((r) => !r.ok).length,
+  };
+}
+
+export interface IpCommitResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: Array<{ line: number; host: string; port: number; reason: string }>;
+  storageMode: number;
+}
+
+/** 三段式第 3 段：仅提交测试通过的行 */
+export async function commitIpRows(
+  account: Account,
+  rows: IpRowInput[],
+  storageMode?: number
+): Promise<IpCommitResult> {
+  const ctx = await resolvePoolForManage(account);
+  if (ctx.scope === 1 && storageMode === 2) {
+    throw new ApiError('「仅本机」模式不上传资源，请在本地保存', 4031, 200);
+  }
+  const list = Array.isArray(rows) ? rows.slice(0, MAX_COMMIT_ROWS) : [];
+  if (!list.length) throw new ApiError('没有可提交的资源', 400);
+
+  const existing = await existingResourceMap(ctx);
+  const result: IpCommitResult = { created: 0, updated: 0, skipped: 0, failed: [], storageMode: ctx.storageMode };
+
+  for (const input of list) {
+    const preview = buildRow(
+      [input.proxyType || 'socks5', input.host || '', String(input.port || ''), input.username || '', input.password || '', input.remark || ''].join(','),
+      Number(input.line || 0)
+    );
+    if (!preview.valid) {
+      result.failed.push({ line: preview.line, host: preview.host, port: preview.port, reason: preview.error });
+      continue;
+    }
+    if (!input.testedOk) {
+      result.failed.push({ line: preview.line, host: preview.host, port: preview.port, reason: '未通过连通测试' });
+      continue;
+    }
+    const key = keyOf(preview.host, preview.port, preview.username);
+    const hit = existing.get(key);
+    if (hit) {
+      if (!input.overwrite) {
+        result.skipped += 1;
+        continue;
+      }
+      hit.proxyType = preview.proxyType || hit.proxyType;
+      if (preview.password) hit.passwordEnc = encryptSecret(preview.password);
+      hit.remark = preview.remark || hit.remark;
+      hit.status = 1;
+      hit.health = 2;
+      hit.latencyMs = Number.isFinite(input.latencyMs) ? Number(input.latencyMs) : hit.latencyMs;
+      hit.lastCheckAt = new Date();
+      await resourceRepo().save(hit);
+      result.updated += 1;
+      continue;
+    }
+    const saved = await resourceRepo().save(
+      resourceRepo().create({
+        scope: ctx.scope,
+        ownerAccountId: ctx.ownerAccountId,
+        enterpriseId: ctx.enterpriseId,
+        proxyType: preview.proxyType || 'socks5',
+        host: preview.host,
+        port: preview.port,
+        username: preview.username,
+        passwordEnc: encryptSecret(preview.password),
+        remark: preview.remark || null,
+        status: 1,
+        health: 2,
+        latencyMs: Number.isFinite(input.latencyMs) ? Number(input.latencyMs) : null,
+        lastCheckAt: new Date(),
+      })
+    );
+    existing.set(key, saved);
+    result.created += 1;
+  }
+
+  await writeOperationLog(
+    account.id,
+    'ip.resource.commit',
+    ctx.scope === 2 ? `enterprise:${ctx.enterpriseId}` : `account:${account.id}`,
+    `导入 IP 资源：新增 ${result.created}、覆盖 ${result.updated}、跳过 ${result.skipped}、失败 ${result.failed.length}`,
+    ''
+  );
+  return result;
+}
+
+/** 资源列表（个人池 / 企业池 / 成员自己的资源） */
+export async function listResources(
+  account: Account,
+  opts: { page?: number; pageSize?: number; keyword?: string; status?: number; bound?: number }
+): Promise<{
+  total: number;
+  page: number;
+  pageSize: number;
+  storageMode: number;
+  list: IpResourceView[];
+}> {
+  const ctx = await resolvePoolForRead(account);
+  const page = Math.max(1, Number(opts.page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 20));
+  const keyword = String(opts.keyword || '').trim();
+
+  const qb = visibleResourceQuery(ctx, account);
+  if (keyword) {
+    qb.andWhere('(r.host LIKE :kw OR r.username LIKE :kw OR r.remark LIKE :kw)', { kw: `%${keyword}%` });
+  }
+  if (opts.status === 1 || opts.status === 2) {
+    qb.andWhere('r.status = :status', { status: opts.status });
+  }
+  const total = await qb.getCount();
+  const rows = await qb.orderBy('r.id', 'DESC').skip((page - 1) * pageSize).take(pageSize).getMany();
+  const views = await decorateResources(rows, ctx, account);
+  const list = opts.bound === undefined ? views : views.filter((v) => (opts.bound === 1 ? v.assigned : !v.assigned));
+  return { total, page, pageSize, storageMode: ctx.storageMode, list };
+}
+
+/** 批量补充分配信息与掩码 */
+async function decorateResources(rows: IpResource[], ctx: IpPoolContext, account: Account): Promise<IpResourceView[]> {
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  const assignments = await assignmentRepo()
+    .createQueryBuilder('a')
+    .where('a.resource_id IN (:...ids)', { ids })
+    .andWhere('a.status IN (1,2)')
+    .getMany();
+  const memberIds = [...new Set(assignments.map((a) => a.memberAccountId))];
+  const members = memberIds.length ? await accountRepo().createQueryBuilder('ac').where('ac.id IN (:...ids)', { ids: memberIds }).getMany() : [];
+  const memberMap = new Map(members.map((m) => [String(m.id), m]));
+  const assignmentMap = new Map(assignments.map((a) => [String(a.resourceId), a]));
+
+  return rows.map((r) => {
+    const a = assignmentMap.get(String(r.id));
+    const member = a ? memberMap.get(String(a.memberAccountId)) : undefined;
+    const plaintext = !!a && a.plaintextVisible === 1 && String(a.memberAccountId) === String(account.id);
+    return {
+      id: String(r.id),
+      scope: r.scope,
+      proxyType: r.proxyType,
+      host: r.host,
+      port: r.port,
+      username: plaintext ? r.username : maskAccountName(r.username),
+      usernameMasked: maskAccountName(r.username),
+      password: plaintext ? decryptSecret(r.passwordEnc) : '',
+      hasPassword: !!r.passwordEnc,
+      remark: r.remark || '',
+      status: r.status,
+      health: r.health,
+      latencyMs: r.latencyMs,
+      lastCheckAt: toIso(r.lastCheckAt),
+      createdAt: toIso(r.createdAt),
+      plaintextVisible: !!a && a.plaintextVisible === 1,
+      assigned: !!a,
+      inUse: !!a && a.status === 2,
+      envId: a?.envId ?? null,
+      envName: a?.envName ?? null,
+      boundAt: toIso(a?.boundAt),
+      memberAccountId: a ? String(a.memberAccountId) : null,
+      memberLogin: member?.login ?? null,
+      memberNickname: member?.nickname ?? null,
+    };
+  });
+}
+
+/** 资源池存储模式 */
+export async function getPoolMode(account: Account): Promise<{ ownerType: number; storageMode: number }> {
+  const ctx = await resolvePoolForRead(account);
+  if (ctx.scope === 2) return { ownerType: 2, storageMode: 1 };
+  return { ownerType: 1, storageMode: ctx.storageMode };
+}
+
+/** 切换存储模式：个人池 1↔2；企业池固定 1 */
+export async function setPoolMode(account: Account, mode: number): Promise<{ storageMode: number; removed: number }> {
+  if (mode !== 1 && mode !== 2) throw new ApiError('存储模式参数错误', 400);
+  const ctx = await resolvePoolForManage(account);
+  if (ctx.scope === 2) throw new ApiError('企业资源池固定为持久化模式', 4032);
+  if (mode === ctx.storageMode) return { storageMode: mode, removed: 0 };
+
+  let removed = 0;
+  if (mode === 2) {
+    // 持久化 → 仅本机：服务端删除，客户端保留本地副本
+    const rows = await resourceRepo()
+      .createQueryBuilder('r')
+      .where('r.scope = 1 AND r.owner_account_id = :ownerId', { ownerId: ctx.ownerAccountId })
+      .getMany();
+    const ids = rows.map((r) => r.id);
+    if (ids.length) {
+      await assignmentRepo()
+        .createQueryBuilder()
+        .update(IpAssignment)
+        .set({ status: 3, releasedAt: new Date(), releaseReason: '切换为仅本机存储' })
+        .where('resource_id IN (:...ids) AND status IN (1,2)', { ids })
+        .execute();
+      await assignmentRepo().createQueryBuilder().delete().where('resource_id IN (:...ids)', { ids }).execute();
+      await resourceRepo().createQueryBuilder().delete().where('id IN (:...ids)', { ids }).execute();
+      removed = ids.length;
+    }
+  }
+  const repo = settingRepo();
+  const row = await repo.findOneBy({ ownerType: 1, ownerId: account.id });
+  if (row) {
+    row.storageMode = mode;
+    await repo.save(row);
+  } else {
+    await repo.save(repo.create({ ownerType: 1, ownerId: account.id, storageMode: mode }));
+  }
+  await writeOperationLog(account.id, 'ip.pool.mode', `account:${account.id}`, `存储模式切换为 ${mode === 1 ? '持久化' : '仅本机'}`, '');
+  return { storageMode: mode, removed };
+}
+
+/** 校验资源归属（管理侧） */
+async function getManageableResource(account: Account, ctx: IpPoolContext, resourceId: string): Promise<IpResource> {
+  const r = await resourceRepo().findOneBy({ id: resourceId });
+  if (!r) throw new ApiError('资源不存在', 4004, 404);
+  if (ctx.scope === 1) {
+    if (r.scope !== 1 || String(r.ownerAccountId) !== String(account.id)) throw new ApiError('无权操作该资源', 4003, 403);
+  } else if (r.scope !== 2 || String(r.enterpriseId) !== String(ctx.enterpriseId)) {
+    throw new ApiError('无权操作该资源', 4003, 403);
+  }
+  return r;
+}
+
+/** 删除资源（使用中拒绝） */
+export async function deleteResource(account: Account, resourceId: string): Promise<void> {
+  const ctx = await resolvePoolForManage(account);
+  const r = await getManageableResource(account, ctx, resourceId);
+  const active = await assignmentRepo().findOneBy({ resourceId: r.id, status: 2 });
+  if (active) {
+    throw new ApiError('资源使用中，请先在环境里清除后再删除', 4006, 200, {
+      occupied: [{ resourceId: r.id, host: r.host, port: r.port, envName: active.envName }],
+    });
+  }
+  await assignmentRepo().createQueryBuilder().delete().where('resource_id = :id', { id: r.id }).execute();
+  await resourceRepo().delete(r.id);
+  await writeOperationLog(account.id, 'ip.resource.delete', `${r.host}:${r.port}`, '删除 IP 资源', '');
+}
+
+/** 停用 / 启用 */
+export async function setResourceStatus(account: Account, resourceId: string, status: number): Promise<void> {
+  if (status !== 1 && status !== 2) throw new ApiError('状态参数错误', 400);
+  const ctx = await resolvePoolForManage(account);
+  const r = await getManageableResource(account, ctx, resourceId);
+  if (status === 2) {
+    const active = await assignmentRepo().findOneBy({ resourceId: r.id, status: 2 });
+    if (active) throw new ApiError('资源使用中，请先在环境里清除后再停用', 4006);
+  }
+  r.status = status;
+  await resourceRepo().save(r);
+  await writeOperationLog(account.id, 'ip.resource.status', `${r.host}:${r.port}`, status === 1 ? '启用资源' : '停用资源', '');
+}
+
+/** 单条重测：失败只标异常，不删除 */
+export async function testResource(account: Account, resourceId: string): Promise<{ ok: boolean; latencyMs: number; error: string }> {
+  const ctx = await resolvePoolForRead(account);
+  const r = await resourceRepo().findOneBy({ id: resourceId });
+  if (!r) throw new ApiError('资源不存在', 4004, 404);
+  if (ctx.scope === 2 && ctx.role === 'member') {
+    const a = await assignmentRepo().findOneBy({ resourceId: r.id, memberAccountId: account.id, status: 1 });
+    const a2 = await assignmentRepo().findOneBy({ resourceId: r.id, memberAccountId: account.id, status: 2 });
+    if (!a && !a2) throw new ApiError('无权操作该资源', 4003, 403);
+  } else if (ctx.scope === 1 && String(r.ownerAccountId) !== String(account.id)) {
+    throw new ApiError('无权操作该资源', 4003, 403);
+  }
+  const probe = await probeProxy(
+    (r.proxyType === 'http' ? 'http' : 'socks5') as IpProxyType,
+    r.host,
+    r.port,
+    r.username,
+    decryptSecret(r.passwordEnc)
+  );
+  r.health = probe.ok ? 2 : 3;
+  r.latencyMs = probe.latencyMs;
+  r.lastCheckAt = new Date();
+  await resourceRepo().save(r);
+  return { ok: probe.ok, latencyMs: probe.latencyMs, error: probe.error };
+}
+
+/** 可用资源：个人池未占用 / 成员已分配未占用 */
+export async function listAvailable(account: Account): Promise<IpResourceView[]> {
+  const ctx = await resolvePoolForRead(account);
+
+  if (ctx.scope === 1) {
+    const rows = await resourceRepo()
+      .createQueryBuilder('r')
+      .where('r.scope = 1 AND r.owner_account_id = :ownerId AND r.status = 1', { ownerId: ctx.ownerAccountId })
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM ip_assignments a WHERE a.resource_id = r.id AND a.status = 2)'
+      )
+      .orderBy('r.id', 'DESC')
+      .getMany();
+    return decorateResources(rows, ctx, account);
+  }
+
+  const qb = resourceRepo()
+    .createQueryBuilder('r')
+    .innerJoin(IpAssignment, 'a', 'a.resource_id = r.id')
+    .where('r.scope = 2 AND r.enterprise_id = :entId AND r.status = 1', { entId: ctx.enterpriseId })
+    .andWhere('a.status = 1');
+  if (ctx.role === 'member') {
+    qb.andWhere('a.member_account_id = :memberId', { memberId: account.id });
+  }
+  const rows = await qb.orderBy('r.id', 'DESC').getMany();
+  return decorateResources(rows, ctx, account);
+}
+
+/** 绑定（事务 + 唯一约束，防并发抢占） */
+export async function bindResource(
+  account: Account,
+  resourceId: string,
+  envId: string,
+  envName: string
+): Promise<{
+  resourceId: string;
+  proxyType: string;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  plaintextVisible: boolean;
+}> {
+  const ctx = await resolvePoolForRead(account);
+
+  return AppDataSource.transaction(async (manager) => {
+    const r = await manager.getRepository(IpResource).findOne({ where: { id: resourceId }, lock: { mode: 'pessimistic_write' } });
+    if (!r) throw new ApiError('资源不存在', 4004, 404);
+    if (r.status !== 1) throw new ApiError('资源已停用，请联系管理员', 4008);
+    if (ctx.scope === 1) {
+      if (r.scope !== 1 || String(r.ownerAccountId) !== String(account.id)) throw new ApiError('无权使用该资源', 4003, 403);
+    } else if (r.scope !== 2 || String(r.enterpriseId) !== String(ctx.enterpriseId)) {
+      throw new ApiError('无权使用该资源', 4003, 403);
+    }
+
+    const repo = manager.getRepository(IpAssignment);
+    let a = await repo.findOne({ where: { resourceId: r.id }, lock: { mode: 'pessimistic_write' } });
+    if (a && a.status === 2) throw new ApiError('该资源已被占用，请选择其他资源', 4007);
+    if (ctx.role === 'member') {
+      if (!a || String(a.memberAccountId) !== String(account.id)) throw new ApiError('该资源未分配给你', 4003, 403);
+      if (a.status !== 1) throw new ApiError('该资源未分配给你', 4003, 403);
+    }
+
+    if (!a) {
+      a = repo.create({
+        resourceId: r.id,
+        enterpriseId: ctx.enterpriseId,
+        memberAccountId: account.id,
+        assignedBy: account.id,
+        plaintextVisible: 0,
+        status: 2,
+        envId,
+        envName,
+        boundAt: new Date(),
+      });
+    } else {
+      a.status = 2;
+      a.envId = envId;
+      a.envName = envName;
+      a.boundAt = new Date();
+      a.releasedAt = null;
+      a.releaseReason = null;
+      if (ctx.scope === 1 && String(a.memberAccountId) !== String(account.id)) {
+        a.memberAccountId = account.id;
+      }
+    }
+    await repo.save(a);
+
+    return {
+      resourceId: String(r.id),
+      proxyType: r.proxyType,
+      host: r.host,
+      port: r.port,
+      username: r.username,
+      password: decryptSecret(r.passwordEnc),
+      plaintextVisible: a.plaintextVisible === 1,
+    };
+  });
+}
+
+/** 释放（客户端清除代理 / 环境删除 / 退出登录 / 兜底） */
+export async function releaseResource(account: Account, resourceId: string, reason: string): Promise<void> {
+  const a = await assignmentRepo().findOneBy({ resourceId });
+  if (!a) return;
+  if (a.status !== 2) return;
+
+  const ctx = await resolvePoolForRead(account);
+  const isOwner =
+    ctx.scope === 1
+      ? String(a.memberAccountId) === String(account.id)
+      : String(a.enterpriseId) === String(ctx.enterpriseId) &&
+        (ctx.role === 'admin' || String(a.memberAccountId) === String(account.id));
+  if (!isOwner) throw new ApiError('无权释放该资源', 4003, 403);
+
+  a.status = ctx.scope === 1 ? 3 : 1;
+  a.releasedAt = new Date();
+  a.releaseReason = (reason || '客户端释放').slice(0, 255);
+  a.boundAt = null;
+  a.envId = null;
+  a.envName = null;
+  await assignmentRepo().save(a);
+}
+
+export interface TeamPoolQuery {
+  page?: number;
+  pageSize?: number;
+  keyword?: string;
+  status?: number;
+  memberId?: string;
+}
+
+/** 企业资源池列表（管理员） */
+export async function listEnterprisePool(
+  account: Account,
+  ctx: EnterpriseContext,
+  opts: TeamPoolQuery
+): Promise<{ total: number; page: number; pageSize: number; seats: number; usedSeats: number; list: IpResourceView[] }> {
+  const page = Math.max(1, Number(opts.page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 20));
+  const keyword = String(opts.keyword || '').trim();
+  const poolCtx: IpPoolContext = {
+    scope: 2,
+    ownerAccountId: '0',
+    enterpriseId: ctx.enterprise.id,
+    role: 'admin',
+    storageMode: 1,
+    enterprise: ctx.enterprise,
+  };
+
+  const qb = resourceRepo().createQueryBuilder('r').where('r.scope = 2 AND r.enterprise_id = :entId', {
+    entId: ctx.enterprise.id,
+  });
+  if (keyword) qb.andWhere('(r.host LIKE :kw OR r.username LIKE :kw OR r.remark LIKE :kw)', { kw: `%${keyword}%` });
+  if (opts.status === 1 || opts.status === 2) qb.andWhere('r.status = :status', { status: opts.status });
+  if (opts.memberId) {
+    qb.innerJoin(IpAssignment, 'fa', 'fa.resource_id = r.id')
+      .andWhere('fa.member_account_id = :memberId', { memberId: opts.memberId })
+      .andWhere('fa.status IN (1,2)');
+  }
+  const total = await qb.getCount();
+  const rows = await qb.orderBy('r.id', 'DESC').skip((page - 1) * pageSize).take(pageSize).getMany();
+  const list = await decorateResources(rows, poolCtx, account);
+  const usedSeats = await memberRepo().count({ where: { enterpriseId: ctx.enterprise.id, status: 1 } });
+  return { total, page, pageSize, seats: ctx.enterprise.seats, usedSeats, list };
+}
+
+/** 分配（管理员 → 成员）；支持批量与「允许查看明文」 */
+export async function assignResources(
+  admin: Account,
+  ctx: EnterpriseContext,
+  memberId: string,
+  resourceIds: string[],
+  plaintextVisible: boolean,
+  ip?: string
+): Promise<{ assigned: number; failed: Array<{ resourceId: string; reason: string }> }> {
+  const member = await memberRepo().findOneBy({ id: memberId, enterpriseId: ctx.enterprise.id });
+  if (!member || member.status !== 1) throw new ApiError('成员不存在或已停用', 4004, 404);
+  const ids = [...new Set((resourceIds || []).map(String))].slice(0, MAX_COMMIT_ROWS);
+  if (!ids.length) throw new ApiError('请选择要分配的资源', 400);
+
+  const resources = await resourceRepo()
+    .createQueryBuilder('r')
+    .where('r.id IN (:...ids)', { ids })
+    .andWhere('r.scope = 2 AND r.enterprise_id = :entId', { entId: ctx.enterprise.id })
+    .getMany();
+  const found = new Map(resources.map((r) => [String(r.id), r]));
+  const result: { assigned: number; failed: Array<{ resourceId: string; reason: string }> } = { assigned: 0, failed: [] };
+
+  for (const id of ids) {
+    const r = found.get(id);
+    if (!r) {
+      result.failed.push({ resourceId: id, reason: '资源不存在或不属于本企业' });
+      continue;
+    }
+    let a = await assignmentRepo().findOneBy({ resourceId: r.id });
+    if (a && a.status === 2) {
+      result.failed.push({ resourceId: id, reason: '资源使用中，请先回收' });
+      continue;
+    }
+    if (!a) {
+      a = assignmentRepo().create({
+        resourceId: r.id,
+        enterpriseId: ctx.enterprise.id,
+        memberAccountId: member.accountId,
+        assignedBy: admin.id,
+        plaintextVisible: plaintextVisible ? 1 : 0,
+        status: 1,
+      });
+    } else {
+      a.memberAccountId = member.accountId;
+      a.assignedBy = admin.id;
+      a.plaintextVisible = plaintextVisible ? 1 : 0;
+      a.status = 1;
+      a.envId = null;
+      a.envName = null;
+      a.boundAt = null;
+      a.releasedAt = null;
+      a.releaseReason = null;
+    }
+    await assignmentRepo().save(a);
+    result.assigned += 1;
+  }
+
+  await writeOperationLog(
+    admin.id,
+    'ip.assign',
+    `member:${member.accountId}`,
+    `分配 IP 资源 ${result.assigned} 个（明文可见=${plaintextVisible ? '是' : '否'}）`,
+    ip || ''
+  );
+  return result;
+}
+
+/** 回收（管理员）；使用中拒绝 */
+export async function recycleResource(
+  admin: Account,
+  ctx: EnterpriseContext,
+  memberId: string,
+  resourceId: string,
+  ip?: string
+): Promise<void> {
+  const member = await memberRepo().findOneBy({ id: memberId, enterpriseId: ctx.enterprise.id });
+  if (!member) throw new ApiError('成员不存在', 4004, 404);
+  const r = await resourceRepo().findOneBy({ id: resourceId, scope: 2, enterpriseId: ctx.enterprise.id });
+  if (!r) throw new ApiError('资源不存在或不属于本企业', 4004, 404);
+  const a = await assignmentRepo().findOneBy({ resourceId: r.id });
+  if (!a || String(a.memberAccountId) !== String(member.accountId) || a.status === 3) {
+    throw new ApiError('该资源未分配给此成员', 4004);
+  }
+  if (a.status === 2) {
+    throw new ApiError('资源使用中，请成员在客户端清除后再回收', 4006, 200, {
+      occupied: [{ resourceId: r.id, host: r.host, port: r.port, envName: a.envName }],
+    });
+  }
+  a.status = 3;
+  a.releasedAt = new Date();
+  a.releaseReason = '管理员回收';
+  a.envId = null;
+  a.envName = null;
+  a.boundAt = null;
+  await assignmentRepo().save(a);
+  await writeOperationLog(admin.id, 'ip.recycle', `${r.host}:${r.port}`, `回收成员 ${member.accountId} 的资源`, ip || '');
+}
+
+/** 兜底释放：绑定超过 10 分钟且设备无心跳 */
+export async function autoReleaseStaleResources(): Promise<number> {
+  const now = Date.now();
+  const rows = await assignmentRepo()
+    .createQueryBuilder('a')
+    .where('a.status = 2 AND a.bound_at IS NOT NULL AND a.bound_at < :limit', {
+      limit: new Date(now - STALE_BIND_MS),
+    })
+    .limit(200)
+    .getMany();
+  if (!rows.length) return 0;
+
+  const memberIds = [...new Set(rows.map((a) => a.memberAccountId))];
+  const devices = await deviceRepo()
+    .createQueryBuilder('d')
+    .where('d.account_id IN (:...ids)', { ids: memberIds })
+    .andWhere('d.status = 1')
+    .getMany();
+  const lastActive = new Map<string, number>();
+  for (const d of devices) {
+    const t = d.lastActiveAt ? d.lastActiveAt.getTime() : 0;
+    lastActive.set(String(d.accountId), Math.max(lastActive.get(String(d.accountId)) || 0, t));
+  }
+
+  let released = 0;
+  for (const a of rows) {
+    const active = lastActive.get(String(a.memberAccountId)) || 0;
+    const bound = a.boundAt ? a.boundAt.getTime() : 0;
+    if (active && active > bound) continue; // 设备有心跳，保留绑定
+    a.status = a.enterpriseId && String(a.enterpriseId) !== '0' ? 1 : 3;
+    a.releasedAt = new Date();
+    a.releaseReason = '设备超过 10 分钟无心跳，自动释放';
+    a.boundAt = null;
+    a.envId = null;
+    a.envName = null;
+    await assignmentRepo().save(a);
+    released += 1;
+  }
+  return released;
+}

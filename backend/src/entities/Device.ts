@@ -34,4 +34,8 @@ export class Device {
 
   @Column({ name: 'unbind_at', type: 'datetime', nullable: true })
   unbindAt!: Date | null;
+
+  // ===== 账号体系增量字段（可空，兼容存量设备） =====
+  @Column({ type: 'bigint', name: 'account_id', unsigned: true, nullable: true })
+  accountId!: string | null;
 }

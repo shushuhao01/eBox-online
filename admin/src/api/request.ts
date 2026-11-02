@@ -81,6 +81,10 @@ export function put<T = unknown>(url: string, data?: unknown): Promise<T> {
   return request.put(url, data) as Promise<T>
 }
 
+export function patch<T = unknown>(url: string, data?: unknown): Promise<T> {
+  return request.patch(url, data) as Promise<T>
+}
+
 export function del<T = unknown>(url: string, params?: Record<string, unknown>): Promise<T> {
   return request.delete(url, { params }) as Promise<T>
 }

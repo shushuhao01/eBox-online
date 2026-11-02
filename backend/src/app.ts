@@ -12,10 +12,14 @@ import { env } from './config/env';
 import { logger, log } from './config/logger';
 import { initializeDatabase } from './config/database';
 import { ensureSchema } from './config/ensureSchema';
+import { ensureAccountSchema } from './config/ensureAccountSchema';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { authRequired } from './middleware/helpers';
 
 import clientRoutes from './routes/client';
+import accountRoutes from './routes/account';
+import teamRoutes from './routes/team';
+import ipRoutes from './routes/ip';
 import noticeRoutes from './routes/notice';
 import agencyRoutes from './routes/agency';
 import siteRoutes from './routes/site';
@@ -31,12 +35,18 @@ import adminBatchRoutes from './routes/admin/batches';
 import adminUserRoutes from './routes/admin/users';
 import adminSiteRoutes from './routes/admin/site';
 import adminAgencyRoutes from './routes/admin/agencies';
+import adminAccountRoutes from './routes/admin/accounts';
+import adminEnterpriseRoutes from './routes/admin/enterprises';
+import adminIpResourceRoutes from './routes/admin/ipResources';
+import adminMallRoutes from './routes/admin/mall';
 import { markExpiredKeys } from './services/KeyService';
 import { getConfigValue, processScheduledNotice } from './services/ConfigService';
 import { cleanExpiredData } from './services/LogService';
 import { cleanSiteVisitLogs, cleanSiteOnline } from './services/SiteAnalyticsService';
 import { cleanChannelClicks } from './services/ChannelService';
 import { cleanAgencyClicks, processScheduledAgencies } from './services/AgencyService';
+import { autoReleaseStaleResources } from './services/IpResourceService';
+import { markExpiredAccountLicenses } from './services/LicenseAccountService';
 
 const app = express();
 const PORT = env.port;
@@ -61,12 +71,13 @@ app.use(
     credentials: false,
   })
 );
-// 公告 SSE 长连接路径：不压缩（compression 会缓冲流式响应导致事件延迟）
+// SSE 长连接路径：不压缩（compression 会缓冲流式响应导致事件延迟）
 const NOTICE_STREAM_PATH = `${API_PREFIX}/notice/stream`;
+const ACCOUNT_STREAM_PATH = `${API_PREFIX}/account/events`;
 app.use(
   compression({
     filter: (req, res) => {
-      if (req.path === NOTICE_STREAM_PATH) return false;
+      if (req.path === NOTICE_STREAM_PATH || req.path === ACCOUNT_STREAM_PATH) return false;
       return compression.filter(req, res);
     },
   })
@@ -89,9 +100,31 @@ const generalLimiter = rateLimit({
   message: { code: 429, msg: '请求过于频繁，请稍后再试', data: null },
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path === '/health' || req.path === NOTICE_STREAM_PATH,
+  skip: (req) =>
+    req.path === '/health' || req.path === NOTICE_STREAM_PATH || req.path === ACCOUNT_STREAM_PATH,
 });
 app.use(generalLimiter);
+
+// 凭据类接口限流（M7）：登录、注册、找回密码、激活、升级码 / 席位码核销均在 10 分钟内限制次数，
+// 防止撞库与核销码暴力枚举；与通用限流叠加，不影响其它接口。
+const credentialLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  message: { code: 429, msg: '操作过于频繁，请稍后再试', data: null },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+for (const p of [
+  '/account/login',
+  '/account/register',
+  '/account/password/forgot',
+  '/account/password/reset',
+  '/license/activate',
+  '/account/upgrade-code/redeem',
+  '/team/seat-addons/redeem',
+]) {
+  app.use(`${API_PREFIX}${p}`, credentialLimiter);
+}
 
 // 管理接口限流（更严格）
 const adminLimiter = rateLimit({
@@ -117,6 +150,15 @@ app.use('/api/uploads', express.static(uploadRoot, { maxAge: '7d', fallthrough: 
 // ==================== 客户端接口（无需登录） ====================
 app.use(API_PREFIX, clientRoutes);
 
+// ==================== 账号体系接口（注册/登录/会话/客户端配置） ====================
+app.use(API_PREFIX, accountRoutes);
+
+// ==================== 企业团队管理（企业管理员；成员访问 403） ====================
+app.use(API_PREFIX, teamRoutes);
+
+// ==================== IP 资源池（个人高级 / 企业管理员导入；成员使用已分配资源） ====================
+app.use(API_PREFIX, ipRoutes);
+
 // ==================== 系统公告实时推送（SSE 长连接，无需登录） ====================
 app.use(API_PREFIX, noticeRoutes);
 
@@ -141,6 +183,10 @@ app.use(`${ADMIN_PREFIX}`, authRequired, adminBatchRoutes);
 app.use(`${ADMIN_PREFIX}/users`, authRequired, adminUserRoutes);
 app.use(`${ADMIN_PREFIX}/site`, authRequired, adminSiteRoutes);
 app.use(`${ADMIN_PREFIX}/agencies`, authRequired, adminAgencyRoutes);
+app.use(`${ADMIN_PREFIX}/accounts`, authRequired, adminAccountRoutes);
+app.use(`${ADMIN_PREFIX}`, authRequired, adminEnterpriseRoutes);
+app.use(`${ADMIN_PREFIX}`, authRequired, adminIpResourceRoutes);
+app.use(`${ADMIN_PREFIX}`, authRequired, adminMallRoutes);
 
 // 404 与错误处理
 app.use(notFoundHandler);
@@ -155,6 +201,9 @@ async function main() {
     // 结构自愈：自动创建 / 补齐官网访问明细表（无需手动执行建表 SQL）
     await ensureSchema();
 
+    // 账号与团队体系结构自愈（新建账号/企业/SKU/IP 资源表，补列，种子；幂等）
+    await ensureAccountSchema();
+
     // 定时任务：每小时清理过期激活码状态
     cron.schedule('0 * * * *', async () => {
       try {
@@ -162,6 +211,18 @@ async function main() {
         if (n > 0) log.info(`定时清理：${n} 个激活码已过期`);
       } catch (e) {
         log.error('定时清理失败', e);
+      }
+    });
+
+    // 定时任务：每日标记账号体系已到期卡密 / 企业（权益本身按到期时间动态判定，此处用于运营视图）
+    cron.schedule('10 0 * * *', async () => {
+      try {
+        const r = await markExpiredAccountLicenses();
+        if (r.keys + r.enterprises > 0) {
+          log.info(`账号到期标记：${r.keys} 张卡密、${r.enterprises} 个企业`);
+        }
+      } catch (e) {
+        log.error('账号到期标记失败', e);
       }
     });
 
@@ -209,6 +270,16 @@ async function main() {
         await processScheduledAgencies();
       } catch (e) {
         log.error('定时代理商推送失败', e);
+      }
+    });
+
+    // 定时任务：IP 资源兜底释放（绑定超过 10 分钟且设备无心跳）
+    cron.schedule('* * * * *', async () => {
+      try {
+        const n = await autoReleaseStaleResources();
+        if (n > 0) log.info(`IP 资源兜底释放：${n} 个绑定已自动释放`);
+      } catch (e) {
+        log.error('IP 资源兜底释放失败', e);
       }
     });
 

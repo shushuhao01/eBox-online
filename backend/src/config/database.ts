@@ -27,6 +27,20 @@ import { SiteChannelLink } from '../entities/SiteChannelLink';
 import { SiteChannelClick } from '../entities/SiteChannelClick';
 import { SiteChannelStatsDaily } from '../entities/SiteChannelStatsDaily';
 import { ClientAgencyClick } from '../entities/ClientAgencyClick';
+import { Account } from '../entities/account/Account';
+import { AccountSession } from '../entities/account/AccountSession';
+import { AccountDevice } from '../entities/account/AccountDevice';
+import { Enterprise } from '../entities/account/Enterprise';
+import { EnterpriseMember } from '../entities/account/EnterpriseMember';
+import { Sku } from '../entities/account/Sku';
+import { IpResource } from '../entities/account/IpResource';
+import { IpAssignment } from '../entities/account/IpAssignment';
+import { IpPoolSetting } from '../entities/account/IpPoolSetting';
+import { SeatAddon } from '../entities/account/SeatAddon';
+import { UpgradeCode } from '../entities/account/UpgradeCode';
+import { ProxyBlockEvent } from '../entities/account/ProxyBlockEvent';
+import { AgreementAcceptance } from '../entities/account/AgreementAcceptance';
+import { AppConfig } from '../entities/account/AppConfig';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -44,6 +58,11 @@ export const AppDataSource = new DataSource({
     SiteVisitLog, SiteOnline,
     SiteChannelLink, SiteChannelClick, SiteChannelStatsDaily,
     ClientAgencyClick,
+    Account, AccountSession, AccountDevice,
+    Enterprise, EnterpriseMember, Sku,
+    IpResource, IpAssignment, IpPoolSetting,
+    SeatAddon, UpgradeCode, ProxyBlockEvent,
+    AgreementAcceptance, AppConfig,
   ],
   synchronize: false, // 表结构由 database/schema.sql 管理，禁止自动同步
   logging: false,

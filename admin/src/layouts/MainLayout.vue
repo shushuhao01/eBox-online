@@ -89,9 +89,14 @@ const displayName = computed(() => store.displayName)
 /** 菜单项：过滤仅超管可见 */
 const menus = [
   { path: '/dashboard', meta: { title: '总览', icon: 'DataAnalysis' } },
+  { path: '/accounts', meta: { title: '账号管理', icon: 'UserFilled' } },
+  { path: '/enterprises', meta: { title: '企业管理', icon: 'OfficeBuilding' } },
   { path: '/licenses', meta: { title: '激活码管理', icon: 'Key' } },
   { path: '/batches', meta: { title: '码批次', icon: 'Collection' } },
   { path: '/customers', meta: { title: '客户管理', icon: 'User' } },
+  { path: '/mall', meta: { title: '套餐与档位', icon: 'ShoppingCart' } },
+  { path: '/seat-addons', meta: { title: '席位扩容码', icon: 'Ticket' } },
+  { path: '/ip-resources', meta: { title: 'IP 资源', icon: 'Connection' } },
   { path: '/devices', meta: { title: '设备管理', icon: 'Monitor' } },
   { path: '/unbind-logs', meta: { title: '换机记录', icon: 'Refresh' } },
   { path: '/revoke-logs', meta: { title: '作废记录', icon: 'CircleClose' } },

@@ -10,6 +10,7 @@ import { ok, fail, clientIp } from '../../middleware/helpers';
 import { ApiError } from '../../middleware/errorHandler';
 import { generateKeys, revokeKey, restoreKey, restoreDeletedKey, convertToSwitchKey, findByCode, countUnbindThisMonth } from '../../services/KeyService';
 import { writeOperationLog } from '../../services/LogService';
+import { notifyKeyChange } from '../../services/AccountEventService';
 import { getOnlineWindowMinutes } from '../../services/ConfigService';
 import { decodeAndVerify, normalizeCode } from '../../crypto/licenseCodec';
 
@@ -32,6 +33,11 @@ router.post('/keys/generate', async (req, res) => {
       batchId: Joi.string().allow('', null).max(64).default(null),
       batchName: Joi.string().allow('', null).max(64).default(null),
       remark: Joi.string().allow('', null).max(255).default(null),
+      // M7：开卡表单扩展（缺省保持存量行为：个人 / 普通 / 1 席位）
+      version: Joi.number().integer().valid(1, 2).default(1),
+      level: Joi.number().integer().valid(1, 2).default(1),
+      seats: Joi.number().integer().min(1).max(1000).default(1),
+      tierCode: Joi.string().allow('', null).max(32).default(null),
     }).validate(req.body);
     if (error) return fail(res, `参数错误：${error.message}`, 400);
     console.log(`[gen] validate ok t=${Date.now()}`);
@@ -50,7 +56,7 @@ router.post('/keys/generate', async (req, res) => {
       req.auth!.userId,
       '生成激活码',
       target,
-      `数量=${value.count} 时长=${durationText} 绑定=${value.bound ? '绑定' : '通用'} 解绑上限=${unbindText}${value.customerId ? ` 客户ID=${value.customerId}` : ''}`,
+      `数量=${value.count} 时长=${durationText} 绑定=${value.bound ? '绑定' : '通用'} 解绑上限=${unbindText} 版本=${value.version === 2 ? '企业' : '个人'} 级别=${value.level === 2 ? '高级' : '普通'} 席位=${value.seats}${value.customerId ? ` 客户ID=${value.customerId}` : ''}`,
       clientIp(req)
     );
     console.log(`[gen] respond t=${Date.now()}`);
@@ -84,6 +90,13 @@ router.get('/keys', async (req, res) => {
   // 时长筛选：duration 为秒数（0=永久），精确匹配 duration_sec
   const duration = String(req.query.duration || '');
   if (duration !== '' && duration !== 'all') qb.andWhere('k.duration_sec = :d', { d: duration });
+  // M7：版本 / 级别 / 席位筛选
+  const tier = String(req.query.tier || '');
+  if (tier !== '' && tier !== 'all') qb.andWhere('k.tier = :tier', { tier: Number(tier) });
+  const keyLevel = String(req.query.level || '');
+  if (keyLevel !== '' && keyLevel !== 'all') qb.andWhere('k.level = :level', { level: Number(keyLevel) });
+  const seats = String(req.query.seats || '');
+  if (seats !== '' && seats !== 'all') qb.andWhere('k.seats = :seats', { seats: Number(seats) });
   const start = String(req.query.start || '');
   const end = String(req.query.end || '');
   if (start && end) qb.andWhere('k.created_at >= :start AND k.created_at <= :end', { start, end: `${end} 23:59:59` });
@@ -111,6 +124,7 @@ router.post('/keys/:id/revoke', async (req, res) => {
     const reason = String(req.body?.reason || '').slice(0, 255);
     const key = await revokeKey(req.params.id, req.auth!.userId, reason);
     await writeOperationLog(req.auth!.userId, '作废激活码', key.code, `原因：${reason || '无'}`, clientIp(req));
+    notifyKeyChange(key).catch(() => undefined);
     ok(res, { id: key.id, code: key.code, status: key.status });
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);
@@ -123,6 +137,7 @@ router.post('/keys/:id/restore', async (req, res) => {
   try {
     const key = await restoreKey(req.params.id);
     await writeOperationLog(req.auth!.userId, '恢复激活码', key.code, '撤销作废', clientIp(req));
+    notifyKeyChange(key).catch(() => undefined);
     ok(res, { id: key.id, code: key.code, status: key.status });
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);
@@ -182,6 +197,13 @@ router.get('/keys/export', async (req, res) => {
   // 时长筛选：duration 为秒数（0=永久），精确匹配 duration_sec
   const duration = String(req.query.duration || '');
   if (duration !== '' && duration !== 'all') qb.andWhere('k.duration_sec = :d', { d: duration });
+  // M7：版本 / 级别 / 席位筛选
+  const tier = String(req.query.tier || '');
+  if (tier !== '' && tier !== 'all') qb.andWhere('k.tier = :tier', { tier: Number(tier) });
+  const keyLevel = String(req.query.level || '');
+  if (keyLevel !== '' && keyLevel !== 'all') qb.andWhere('k.level = :level', { level: Number(keyLevel) });
+  const seats = String(req.query.seats || '');
+  if (seats !== '' && seats !== 'all') qb.andWhere('k.seats = :seats', { seats: Number(seats) });
   const start = String(req.query.start || '');
   const end = String(req.query.end || '');
   if (start && end) qb.andWhere('k.created_at >= :start AND k.created_at <= :end', { start, end: `${end} 23:59:59` });

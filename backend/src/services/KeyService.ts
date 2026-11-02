@@ -32,6 +32,11 @@ export interface GenerateParams {
   batchId?: string | null; // 归入已有批次（优先）
   batchName?: string | null; // 无 batchId 时按名称新建批次
   remark?: string | null;
+  // M7：开卡表单扩展字段（默认个人普通 1 席位，兼容既有调用）
+  version?: number; // 1=个人 2=企业
+  level?: number; // 1=普通 2=高级
+  seats?: number;
+  tierCode?: string | null;
   createdBy: string;
 }
 
@@ -70,6 +75,11 @@ export async function generateKeys(p: GenerateParams): Promise<{ codes: string[]
       batchId,
       customerId: p.customerId || null,
       remark: p.remark || null,
+      tier: p.version === 2 ? 2 : 1,
+      level: p.level === 2 ? 2 : 1,
+      seats: Math.max(1, Math.floor(p.seats || 1)),
+      tierCode: p.tierCode || null,
+      durationDays: Math.floor(p.durationSec / 86400),
       createdBy: p.createdBy,
       createdAt: new Date(),
     });

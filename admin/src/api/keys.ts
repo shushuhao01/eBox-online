@@ -20,6 +20,15 @@ export interface LicenseKeyItem {
   revokedBy: string | null
   revokedReason: string | null
   convertFromKeyId: string | null
+  /** 档位：1=个人 2=企业 */
+  tier: number
+  /** 级别：1=普通 2=高级 */
+  level: number
+  seats: number
+  tierCode: string | null
+  durationDays: number
+  accountId: string | null
+  enterpriseId: string | null
 }
 
 export interface KeyDevice {
@@ -45,6 +54,12 @@ export interface GenerateParams {
   batchId?: string | null
   batchName?: string | null
   remark?: string | null
+  /** 开卡档位：1=个人 2=企业，默认 1 */
+  version?: number
+  /** 级别：1=普通 2=高级，默认 1 */
+  level?: number
+  seats?: number
+  tierCode?: string | null
 }
 
 export type KeyListParams = {
@@ -56,6 +71,9 @@ export type KeyListParams = {
   batchId?: string
   customerId?: string
   duration?: number | string
+  tier?: number | string
+  level?: number | string
+  seats?: number | string
   start?: string
   end?: string
   search?: string

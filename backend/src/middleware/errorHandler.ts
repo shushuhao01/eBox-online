@@ -4,10 +4,13 @@ import { log } from '../config/logger';
 export class ApiError extends Error {
   status: number;
   code: number;
-  constructor(message: string, code = 1, status = 200) {
+  /** 需要随错误一起返回给客户端的结构化数据（如占用清单） */
+  data?: unknown;
+  constructor(message: string, code = 1, status = 200, data?: unknown) {
     super(message);
     this.code = code;
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -17,7 +20,7 @@ export function notFoundHandler(_req: Request, res: Response) {
 
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   if (err instanceof ApiError) {
-    res.status(err.status).json({ code: err.code, msg: err.message, data: null });
+    res.status(err.status).json({ code: err.code, msg: err.message, data: err.data ?? null });
     return;
   }
   const message = err instanceof Error ? err.message : '服务器内部错误';

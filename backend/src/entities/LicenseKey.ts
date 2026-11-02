@@ -58,4 +58,38 @@ export class LicenseKey {
 
   @Column({ type: 'bigint', name: 'convert_from_key_id', nullable: true })
   convertFromKeyId!: string | null;
+
+  // ===== 账号体系增量字段（可空/带默认值，兼容存量卡密） =====
+  @Column({ type: 'bigint', name: 'account_id', unsigned: true, nullable: true })
+  accountId!: string | null;
+
+  @Column({ type: 'tinyint', default: 1, comment: '1=个人 2=企业' })
+  tier!: number;
+
+  @Column({ type: 'tinyint', default: 1, comment: '1=普通 2=高级' })
+  level!: number;
+
+  @Column({ type: 'bigint', name: 'sku_id', unsigned: true, nullable: true })
+  skuId!: string | null;
+
+  @Column({ type: 'varchar', length: 32, name: 'tier_code', nullable: true })
+  tierCode!: string | null;
+
+  @Column({ type: 'int', name: 'duration_days', default: 0, comment: '0=永久' })
+  durationDays!: number;
+
+  @Column({ type: 'int', default: 1, comment: '同时在线设备/子账户席位' })
+  seats!: number;
+
+  @Column({ type: 'bigint', name: 'enterprise_id', unsigned: true, nullable: true })
+  enterpriseId!: string | null;
+
+  @Column({ name: 'activated_at', type: 'datetime', nullable: true })
+  activatedAt!: Date | null;
+
+  @Column({ name: 'account_expire_at', type: 'datetime', nullable: true, comment: '账号体系续费顺延后的权威到期时间' })
+  accountExpireAt!: Date | null;
+
+  @Column({ type: 'bigint', name: 'replaced_by', unsigned: true, nullable: true, comment: '被哪张卡密覆盖升级' })
+  replacedBy!: string | null;
 }
