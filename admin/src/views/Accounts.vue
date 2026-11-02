@@ -59,6 +59,18 @@
             <span v-else class="text-secondary">-</span>
           </template>
         </el-table-column>
+        <el-table-column label="客户端版本" width="110" align="center">
+          <template #default="{ row }">
+            <span v-if="row.clientVersion" class="code-font">{{ row.clientVersion }}</span>
+            <span v-else class="text-secondary">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="卡密档位" width="96" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.keyPlan" size="small" effect="plain">{{ row.keyPlan }}</el-tag>
+            <span v-else class="text-secondary">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="76" align="center">
           <template #default="{ row }">
             <el-tooltip

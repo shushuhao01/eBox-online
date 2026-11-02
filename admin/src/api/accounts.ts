@@ -14,6 +14,10 @@ export interface AccountItem {
   enterpriseId: string | null
   enterpriseCode: string | null
   enterpriseName: string | null
+  /** 客户端版本：账号最近在线设备上报的 version，无设备时为 null */
+  clientVersion: string | null
+  /** 卡密档位：月卡/季卡/年卡/永久，未绑卡时为 null */
+  keyPlan: string | null
   lastLoginAt: string | null
   createdAt: string
 }

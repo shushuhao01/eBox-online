@@ -24,6 +24,16 @@ const router = Router();
 const accountRepo = () => AppDataSource.getRepository(Account);
 const enterpriseRepo = () => AppDataSource.getRepository(Enterprise);
 
+/** 卡密档位文案：按月/季/年/永久归类，非标准天数直接显示天数 */
+function keyPlanLabel(durationDays: number): string {
+  const d = Number(durationDays) || 0;
+  if (d <= 0) return '永久';
+  if (d >= 360 && d <= 370) return '年卡';
+  if (d >= 85 && d <= 95) return '季卡';
+  if (d >= 28 && d <= 31) return '月卡';
+  return `${d}天`;
+}
+
 /**
  * 管理后台 · 账号运营（M1）
  * 列表 / 解锁 / 重置密码 / 启停用；所有写操作落 operation_logs。
@@ -121,6 +131,35 @@ router.get('/', async (req, res) => {
       : [];
     const entMap = new Map(enterprises.map((e) => [String(e.id), e]));
 
+    // 客户端版本：取该账号最近心跳的设备上报的 app_version
+    const ids = rows.map((r) => r.id);
+    const versionMap = new Map<string, string>();
+    const planMap = new Map<string, string>();
+    if (ids.length) {
+      const devices = await AppDataSource.getRepository(Device)
+        .createQueryBuilder('d')
+        .where('d.accountId IN (:...ids)', { ids })
+        .andWhere('d.appVersion IS NOT NULL')
+        .orderBy('d.lastHeartbeatAt', 'DESC')
+        .getMany();
+      for (const d of devices) {
+        const aid = String(d.accountId || '');
+        if (aid && d.appVersion && !versionMap.has(aid)) versionMap.set(aid, d.appVersion);
+      }
+
+      // 卡密档位：取该账号最近激活的一张卡（含已过期，排除未使用/作废）
+      const keys = await AppDataSource.getRepository(LicenseKey)
+        .createQueryBuilder('k')
+        .where('k.accountId IN (:...ids)', { ids })
+        .andWhere('k.status IN (:...st)', { st: [1, 3] })
+        .orderBy('k.activatedAt', 'DESC')
+        .getMany();
+      for (const k of keys) {
+        const aid = String(k.accountId || '');
+        if (aid && !planMap.has(aid)) planMap.set(aid, keyPlanLabel(k.durationDays));
+      }
+    }
+
     ok(res, {
       total,
       page,
@@ -141,6 +180,8 @@ router.get('/', async (req, res) => {
           enterpriseId: a.enterpriseId,
           enterpriseCode: ent?.code || null,
           enterpriseName: ent?.name || null,
+          clientVersion: versionMap.get(String(a.id)) || null,
+          keyPlan: planMap.get(String(a.id)) || null,
           lastLoginAt: a.lastLoginAt,
           createdAt: a.createdAt,
         };
