@@ -5,6 +5,7 @@ import { ApiError } from '../middleware/errorHandler';
 import { requireAccount } from '../middleware/accountAuth';
 import { AppDataSource } from '../config/database';
 import { Account } from '../entities/account/Account';
+import { NotificationTemplate } from '../entities/account/NotificationTemplate';
 import {
   registerAccount,
   loginAccount,
@@ -173,7 +174,12 @@ router.post('/account/phone/send-code', requireAccount, async (req, res) => {
     const smsConfig = await loadAliyunSmsConfig();
     if (!smsConfig) return fail(res, '短信服务未配置', 400);
     const signName = (await getConfigValue('sms_sign_name')).trim();
-    const templateCode = (await getConfigValue('sms_tpl_verify_code')).trim();
+    // 优先用「绑定手机号验证码」消息模板里配置的短信模板 CODE，未配置时回退全局验证码模板
+    const bindTemplate = await AppDataSource.getRepository(NotificationTemplate).findOneBy({
+      code: 'PHONE_BIND_CODE',
+    });
+    const templateCode =
+      (bindTemplate?.smsTemplateCode || '').trim() || (await getConfigValue('sms_tpl_verify_code')).trim();
     if (!signName || !templateCode) return fail(res, '短信签名或模板未配置', 400);
 
     const code = genPhoneCode();
