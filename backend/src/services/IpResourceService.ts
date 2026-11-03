@@ -753,10 +753,7 @@ export async function setResourceStatus(account: Account, resourceId: string, st
   if (status !== 1 && status !== 2) throw new ApiError('状态参数错误', 400);
   const ctx = await resolvePoolForManage(account);
   const r = await getManageableResource(account, ctx, resourceId);
-  if (status === 2) {
-    const active = await assignmentRepo().findOneBy({ resourceId: r.id, status: 2 });
-    if (active) throw new ApiError('资源使用中，请先在环境里清除后再停用', 4006);
-  }
+  // 使用中的资源允许停用（客户端会二次确认并提示首页对应环境将不可用）
   r.status = status;
   await resourceRepo().save(r);
   await writeOperationLog(account.id, 'ip.resource.status', `${r.host}:${r.port}`, status === 1 ? '启用资源' : '停用资源', '');
