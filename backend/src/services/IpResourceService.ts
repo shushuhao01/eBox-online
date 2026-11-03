@@ -472,14 +472,23 @@ export async function parseIpRows(
   if (lines.length > MAX_COMMIT_ROWS) throw new ApiError(`单次最多导入 ${MAX_COMMIT_ROWS} 条`, 400);
 
   const existing = await existingResourceMap(ctx);
+  const seen = new Set<string>();
   const rows = lines.map((line, idx) => {
     const row = buildRow(line, idx + 1);
     if (row.valid) {
-      const hit = existing.get(keyOf(row.host, row.port, row.username));
+      const key = keyOf(row.host, row.port, row.username);
+      const hit = existing.get(key);
       if (hit) {
         row.duplicate = true;
         row.duplicateId = hit.id;
         row.duplicateAction = 'skip';
+      } else if (seen.has(key)) {
+        // 同一批次内的重复行：过滤掉，只保留第一条
+        row.duplicate = true;
+        row.duplicateId = null;
+        row.duplicateAction = 'skip';
+      } else {
+        seen.add(key);
       }
     }
     return row;
