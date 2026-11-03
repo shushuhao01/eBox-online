@@ -325,8 +325,22 @@
                   style="width: 100%"
                 />
                 <div class="text-secondary">
-                  个人中心 / 用户中心的续费、升级、升企业版、购买卡密等弹窗里「去商城购买」按钮跳转此链接；
-                  升企业版优先用上方对应档位链接，未配置时用此链接；留空则回退客户端内置购买页
+                  升企业版弹窗（个人中心 / 用户中心 / 用户管理的「升企业版」入口）里「去商城购买」按钮跳转此链接；
+                  优先用上方对应档位链接，未配置时用此链接；留空则回退客户端内置购买页
+                </div>
+              </div>
+            </el-form-item>
+            <el-form-item label="其他购买链接">
+              <div style="width: 100%">
+                <el-input
+                  v-model="otherBuyUrl"
+                  placeholder="https://mall.example.com/buy"
+                  clearable
+                  style="width: 100%"
+                />
+                <div class="text-secondary">
+                  激活软件、续费、授权页面「购买激活码」、个人中心「购买卡密」等购买按钮跳转此链接；
+                  与升级码、升企业版互不影响；留空则回退客户端内置购买页
                 </div>
               </div>
             </el-form-item>
@@ -381,8 +395,10 @@ const UPGRADE_DURATIONS: Array<{ key: string; label: string }> = [
 
 const upgradeUrls = reactive<Record<string, string>>({ month: '', quarter: '', year: '', permanent: '' })
 const seatAddonMallUrl = ref('')
-// 通用商城购买链接：个人中心 / 用户中心各弹窗「去商城购买」按钮的兜底地址
+// 升企业版弹窗「去商城购买」的兜底地址
 const buyUrl = ref('')
+// 其他购买按钮链接：激活 / 续费 / 授权页购买 / 个人中心购买卡密
+const otherBuyUrl = ref('')
 const savingMall = ref(false)
 
 /** 固定档位 code：个人/企业 × 普通/高级 × 4 时长（价格 SKU 已移除） */
@@ -409,6 +425,7 @@ async function loadMallLink() {
   const state = await getUpgradeLinks()
   seatAddonMallUrl.value = state.seatAddonMallUrl || ''
   buyUrl.value = state.buyUrl || ''
+  otherBuyUrl.value = state.otherBuyUrl || ''
   for (const g of UPGRADE_DURATIONS) {
     const hit = tierCodesOf(g.key).find((code) => !!state.links[code])
     upgradeUrls[g.key] = hit ? state.links[hit] : ''
@@ -422,6 +439,7 @@ async function saveMallLink() {
       links: buildUpgradeLinks(),
       seatAddonMallUrl: seatAddonMallUrl.value.trim(),
       buyUrl: buyUrl.value.trim(),
+      otherBuyUrl: otherBuyUrl.value.trim(),
     })
     ElMessage.success(`已保存并推送（在线客户端 ${res.delivered} 个）`)
   } finally {

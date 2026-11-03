@@ -20,11 +20,13 @@ export interface UpgradeLinksState {
   links: Record<string, string>
   seatAddonMallUrl: string
   buyUrl: string
+  otherBuyUrl: string
   config: {
     disclaimerVersion: number
     upgradeLinks: Record<string, string>
     seatAddonMallUrl: string
     buyUrl: string
+    otherBuyUrl: string
     ipResourceVersion: number
     configVersion: number
     tiers: Array<{
@@ -85,7 +87,12 @@ export function getUpgradeLinks() {
 }
 
 /** 保存商城链接（保存即 SSE 推送；返回推送到的在线客户端数） */
-export function saveUpgradeLinks(data: { links?: Record<string, string>; seatAddonMallUrl?: string; buyUrl?: string }) {
+export function saveUpgradeLinks(data: {
+  links?: Record<string, string>
+  seatAddonMallUrl?: string
+  buyUrl?: string
+  otherBuyUrl?: string
+}) {
   return put<UpgradeLinksState['config'] & { delivered: number }>('/upgrade-links', data)
 }
 
