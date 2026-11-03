@@ -32,7 +32,19 @@ const accountRepo = () => AppDataSource.getRepository(Account);
 const deviceRepo = () => AppDataSource.getRepository(AccountDevice);
 
 const TEST_TIMEOUT_MS = 5000;
-const TEST_CONCURRENCY = 5;
+const TEST_CONCURRENCY = 10;
+
+/** 探测目标与客户端「网络出口」测试保持一致：ip-api.com 为主，ifconfig.me 兜底 */
+const PROBE_TARGETS: Record<IpProxyType, { host: string; port: number }[]> = {
+  socks5: [
+    { host: 'ip-api.com', port: 80 },
+    { host: 'ifconfig.me', port: 80 },
+  ],
+  http: [
+    { host: 'ip-api.com', port: 443 },
+    { host: 'ifconfig.me', port: 443 },
+  ],
+};
 const STALE_BIND_MS = 10 * 60 * 1000;
 const MAX_COMMIT_ROWS = 500;
 
@@ -501,13 +513,14 @@ interface ProbeResult {
   error: string;
 }
 
-/** SOCKS5 / HTTP 代理握手（5s 超时） */
-function probeProxy(
+/** SOCKS5 / HTTP 代理握手（单目标，5s 超时） */
+function probeProxyOnce(
   proxyType: IpProxyType,
   host: string,
   port: number,
   username: string,
-  password: string
+  password: string,
+  target: { host: string; port: number }
 ): Promise<ProbeResult> {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -537,7 +550,7 @@ function probeProxy(
         const methods = username ? [0x00, 0x02] : [0x00];
         socket.write(Buffer.from([0x05, methods.length, ...methods]));
       } else {
-        let head = 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nProxy-Connection: keep-alive\r\n';
+        let head = `CONNECT ${target.host}:${target.port} HTTP/1.1\r\nHost: ${target.host}:${target.port}\r\nProxy-Connection: keep-alive\r\n`;
         if (username) {
           head += `Proxy-Authorization: Basic ${Buffer.from(`${username}:${password}`, 'utf8').toString('base64')}\r\n`;
         }
@@ -618,13 +631,34 @@ function probeProxy(
     });
 
     function sendSocksConnect() {
-      const hostBuf = Buffer.from('example.com', 'utf8');
-      socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00, 0x03, hostBuf.length]), hostBuf, Buffer.from([0x01, 0xbb])]));
+      const hostBuf = Buffer.from(target.host, 'utf8');
+      const portBuf = Buffer.from([(target.port >> 8) & 0xff, target.port & 0xff]);
+      socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00, 0x03, hostBuf.length]), hostBuf, portBuf]));
     }
   });
 }
 
-/** 并发执行（上限 5） */
+/**
+ * 代理连通性探测：按客户端同样的目标依次尝试（ip-api.com → ifconfig.me）。
+ * 与客户端「网络出口」测试保持一致，避免客户端能连、导入测试却报目标被拒的情况。
+ */
+async function probeProxy(
+  proxyType: IpProxyType,
+  host: string,
+  port: number,
+  username: string,
+  password: string
+): Promise<ProbeResult> {
+  let last: ProbeResult = { ok: false, latencyMs: 0, error: '测试失败' };
+  for (const target of PROBE_TARGETS[proxyType]) {
+    const result = await probeProxyOnce(proxyType, host, port, username, password, target);
+    if (result.ok) return result;
+    last = result;
+  }
+  return last;
+}
+
+/** 并发执行 */
 async function runWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let cursor = 0;
