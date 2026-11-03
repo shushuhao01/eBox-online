@@ -116,10 +116,17 @@ const PROXY_TYPES = new Set(['socks5', 'http']);
 
 function normalizeProxyType(raw: string): IpProxyType | '' {
   const v = (raw || '').trim().toLowerCase();
-  if (v === 'socks5' || v === 'socks') return 'socks5';
+  if (v === 'socks5' || v === 'socks' || v === 'socks5h') return 'socks5';
   if (v === 'http' || v === 'https') return 'http';
   return '';
 }
+
+// 系统只支持 socks5 与 http(CONNECT)；命中这些常见协议名时明确拒绝，避免被当成主机名静默导入
+const UNSUPPORTED_PROXY_TYPES = new Set([
+  'socks4', 'socks4a', 'socks6', 'http2', 'h2', 'trojan', 'vmess', 'vless',
+  'shadowsocks', 'ss', 'ssr', 'hysteria', 'hysteria2', 'tuic', 'wireguard',
+  'mtproto', 'ssh', 'ftp', 'sftp', 'quic', 'naive', 'brook', 'juicity',
+]);
 
 function isValidHost(host: string): boolean {
   if (!host || host.length > 128) return false;
@@ -317,6 +324,10 @@ function buildRow(raw: string, lineNo: number): IpRowPreview {
   }
   // 允许省略“类型”列：首列不是 socks5/http 时按 地址,端口,账号,密码,备注 解析
   const first = normalizeProxyType(cols[0]);
+  if (!first && UNSUPPORTED_PROXY_TYPES.has(cols[0].trim().toLowerCase())) {
+    row.error = `不支持的类型「${cols[0]}」，仅支持 socks5 或 http`;
+    return row;
+  }
   let rest: string[];
   if (first) {
     row.proxyType = first;
