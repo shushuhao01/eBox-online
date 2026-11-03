@@ -4,6 +4,7 @@ import { AppDataSource } from '../config/database';
 import { Account } from '../entities/account/Account';
 import { LicenseKey } from '../entities/LicenseKey';
 import { Entitlements, getEntitlements } from './EntitlementService';
+import { setAccountNoticeSink, type NoticeEvent } from './NoticeBroadcaster';
 
 // ============================================================
 // 账号实时事件推送（SSE）连接池
@@ -53,8 +54,17 @@ function writeEntitlements(res: Response, entitlements: Entitlements): void {
   res.write(`event: account.entitlements\ndata: ${JSON.stringify(payload)}\n\n`);
 }
 
-/** 新连接接入：登记并立即下发当前权益快照，避免等待下一次变更。 */
-export function addAccountClient(accountId: string, res: Response, initial: Entitlements, machineFp?: string): void {
+/**
+ * 新连接接入：登记并立即下发当前权益快照，避免等待下一次变更。
+ * initialNotice 非空时同时下发当前公告快照（账号模式不连卡密公告通道，靠这里兜底）。
+ */
+export function addAccountClient(
+  accountId: string,
+  res: Response,
+  initial: Entitlements,
+  machineFp?: string,
+  initialNotice?: NoticeEvent,
+): void {
   let set = clients.get(accountId);
   if (!set) {
     set = new Set();
@@ -65,7 +75,35 @@ export function addAccountClient(accountId: string, res: Response, initial: Enti
   if (fp) clientMeta.set(res, { machineFp: fp });
   ensureKeepalive();
   writeEntitlements(res, initial);
+  if (initialNotice) writeNotice(res, initialNotice);
 }
+
+/** 下发结构化公告（与卡密通道 /notice/stream 同格式，事件名固定为 notice） */
+function writeNotice(res: Response, event: NoticeEvent): void {
+  res.write(`event: notice\ndata: ${JSON.stringify(event)}\n\n`);
+}
+
+/**
+ * 向全部账号连接广播公告（账号模式客户端没有本机卡密，无法连卡密公告通道）。
+ * 兼容老客户端：同时保留 notice 字符串字段。
+ */
+export function broadcastAccountNotice(event: NoticeEvent): number {
+  let sent = 0;
+  for (const set of clients.values()) {
+    for (const res of set) {
+      try {
+        writeNotice(res, event);
+        sent++;
+      } catch {
+        set.delete(res);
+      }
+    }
+  }
+  return sent;
+}
+
+// 注册到公告广播器：后台保存/撤下公告时同时送达账号通道
+setAccountNoticeSink(broadcastAccountNotice);
 
 /** 连接断开：注销。 */
 export function removeAccountClient(accountId: string, res: Response): void {

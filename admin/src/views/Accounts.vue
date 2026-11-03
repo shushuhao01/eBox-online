@@ -209,7 +209,10 @@
                 <template #default="{ row }"><TimeCell :value="row.activatedAt || row.usedAt" /></template>
               </el-table-column>
               <el-table-column label="到期时间" width="140">
-                <template #default="{ row }"><TimeCell :value="row.accountExpireAt || row.expireAt" /></template>
+                <template #default="{ row }">
+                  <span v-if="row.permanent">永久</span>
+                  <TimeCell v-else :value="row.effectiveExpireAt" />
+                </template>
               </el-table-column>
               <template #empty><span class="text-secondary">暂无绑定卡密</span></template>
             </el-table>

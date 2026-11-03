@@ -1,7 +1,8 @@
-import { LessThan } from 'typeorm';
+import { In, LessThan, Repository } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { LicenseKey } from '../entities/LicenseKey';
 import { Device } from '../entities/Device';
+import { AccountDevice } from '../entities/account/AccountDevice';
 import { Heartbeat } from '../entities/Heartbeat';
 import { UnbindLog } from '../entities/UnbindLog';
 import { RevokeLog } from '../entities/RevokeLog';
@@ -396,13 +397,16 @@ export interface UnbindResult {
 
 // 沿 convertFromKeyId 把当前 key 的整条换机祖先链（含自身）收集成 keyId 列表，
 // 用于统计"这条授权链"本月累计解绑次数，防止换机码被视为全新码从零计次导致无限换机。
-async function collectAncestorKeyIds(key: LicenseKey): Promise<string[]> {
+async function collectAncestorKeyIds(
+  key: LicenseKey,
+  repo: Repository<LicenseKey> = keyRepo()
+): Promise<string[]> {
   const ids: string[] = [key.id];
   const seen = new Set<string>([key.id]);
   let cur = key;
   while (cur && cur.convertFromKeyId && !seen.has(cur.convertFromKeyId)) {
     seen.add(cur.convertFromKeyId);
-    const parent = await keyRepo().findOneBy({ id: cur.convertFromKeyId });
+    const parent = await repo.findOneBy({ id: cur.convertFromKeyId });
     if (!parent) break;
     ids.push(parent.id);
     cur = parent;
@@ -518,6 +522,118 @@ export async function clientUnbind(
   return { online: true, newCode, unbindCount: used + 1, unbindMax: key.unbindMax };
 }
 
+/** 账号个人席位的本月解绑配额（unbindLimit=-1 表示不限） */
+export interface AccountUnbindQuota {
+  unbindUsed: number;
+  unbindLimit: number;
+  unbindRemaining: number;
+}
+
+/** 本次登录的换机检查结果：cost>0 表示会解绑旧设备（消耗次数） */
+export interface AccountUnbindInspection extends AccountUnbindQuota {
+  keyId: string;
+  cost: number;
+  allowed: boolean;
+  reason?: 'no-unbind' | 'exceeded';
+  victimFps: string[];
+  oldDeviceNames: string[];
+}
+
+/** 换机额度不足时的统一错误（沿用 1005，带结构化配额信息） */
+export function accountUnbindQuotaError(inspection: AccountUnbindInspection): ApiError {
+  const data = {
+    code: inspection.reason === 'no-unbind' ? 'UNBIND_DISABLED' : 'UNBIND_QUOTA_EXCEEDED',
+    unbindUsed: inspection.unbindUsed,
+    unbindLimit: inspection.unbindLimit,
+    unbindRemaining: inspection.unbindRemaining,
+    switchCost: inspection.cost,
+    oldDeviceName: inspection.oldDeviceNames[0] || '',
+    oldDeviceCount: inspection.victimFps.length,
+  };
+  if (inspection.reason === 'no-unbind') {
+    return new ApiError('该卡密已关闭解绑，无法在新设备登录，请联系客服', 1005, 200, data);
+  }
+  return new ApiError(
+    `本月解绑次数已用尽（已用 ${inspection.unbindUsed}/${inspection.unbindLimit} 次），请下月再试或联系客服增加次数`,
+    1005,
+    200,
+    data
+  );
+}
+
+function excludedFpSet(machineFps: string[]): Set<string> {
+  return new Set(machineFps.map((fp) => String(fp || '').trim()).filter(Boolean));
+}
+
+/**
+ * 登录前检查：本次登录是否需要换机、会消耗几次、额度是否够。
+ * 不写库、不扣次数、不解绑，供「先确认再换机」的两步协议使用。
+ *
+ * 返回 null 表示无需处理（未绑定卡密 / 非绑定码 / 企业席位模式）。
+ * cost=0 表示同机登录或首次绑定，无需确认。
+ */
+export async function inspectAccountUnbind(
+  accountId: string,
+  excludeMachineFps: string[]
+): Promise<AccountUnbindInspection | null> {
+  const key = await keyRepo()
+    .createQueryBuilder('k')
+    .where('k.account_id = :accountId', { accountId })
+    .andWhere('k.status = 1')
+    .orderBy('k.activated_at', 'DESC')
+    .limit(1)
+    .getOne();
+  if (!key || key.bound !== 1 || key.enterpriseId) return null;
+
+  const excluded = excludedFpSet(excludeMachineFps);
+  // 卡密上仍绑定的其他设备（与旧机器是否在线无关）
+  const victims = (await deviceRepo().findBy({ keyId: key.id, status: 1 })).filter(
+    (d) => !excluded.has(d.machineFp)
+  );
+
+  const month = monthKey();
+  const chainIds = await collectAncestorKeyIds(key);
+  const used = await unbindRepo()
+    .createQueryBuilder('u')
+    .where('u.month = :month', { month })
+    .andWhere('u.keyId IN (:...ids)', { ids: chainIds })
+    .getCount();
+
+  let allowed = true;
+  let reason: 'no-unbind' | 'exceeded' | undefined;
+  if (victims.length > 0) {
+    if (key.unbindMax === 0) {
+      allowed = false;
+      reason = 'no-unbind';
+    } else if (key.unbindMax !== -1 && used + victims.length > key.unbindMax) {
+      allowed = false;
+      reason = 'exceeded';
+    }
+  }
+
+  const victimFps = victims.map((d) => d.machineFp);
+  let oldDeviceNames: string[] = [];
+  if (victimFps.length > 0) {
+    const rows = await AppDataSource.getRepository(AccountDevice).find({
+      where: { accountId, machineFp: In(victimFps) },
+    });
+    const nameByFp = new Map(rows.map((r) => [r.machineFp, r.deviceName || '']));
+    oldDeviceNames = victimFps.map((fp) => nameByFp.get(fp) || '').filter(Boolean);
+  }
+
+  return {
+    keyId: key.id,
+    unbindUsed: used,
+    unbindLimit: key.unbindMax,
+    unbindRemaining: key.unbindMax === -1 ? -1 : Math.max(0, key.unbindMax - used),
+    cost: victimFps.length,
+    allowed,
+    reason,
+    victimFps,
+    oldDeviceNames,
+  };
+}
+
 /**
  * 账号登录换机记账：账号在「新机器」登录时，把该账号生效绑定卡密上其余仍处于绑定状态的
  * 设备解绑，并按整条换机链扣减本月解绑次数（与客户端主动解绑共用同一份 unbind_logs 计数）。
@@ -528,71 +644,88 @@ export async function clientUnbind(
  * 返回 null 表示无需处理（未绑定卡密 / 非绑定码 / 企业席位模式）；
  * 返回 unboundFps 供调用方把对应账号会话吊销并实时推送下线。
  * 解绑次数用尽时抛 ApiError，登录接口会把 message 原样返回给登录页展示。
+ *
+ * 并发：真正扣减在事务内对卡密行加写锁并重新核对额度与绑定设备，
+ * 额度不足直接抛错回滚，不会出现「先扣次数后失败」的白扣。
  */
 export async function consumeUnbindForAccountLogin(
   accountId: string,
   excludeMachineFps: string[],
   opts: { ip?: string; appVersion?: string } = {}
 ): Promise<{ used: number; max: number; unboundFps: string[] } | null> {
-  const excluded = new Set(
-    excludeMachineFps.map((fp) => String(fp || '').trim()).filter(Boolean)
-  );
-  const key = await keyRepo()
-    .createQueryBuilder('k')
-    .where('k.account_id = :accountId', { accountId })
-    .andWhere('k.status = 1')
-    .orderBy('k.activated_at', 'DESC')
-    .limit(1)
-    .getOne();
-  if (!key || key.bound !== 1 || key.enterpriseId) return null;
-
-  // 卡密上仍绑定的其他设备（与旧机器是否在线无关）
-  const victims = (await deviceRepo().findBy({ keyId: key.id, status: 1 })).filter(
-    (d) => !excluded.has(d.machineFp)
-  );
-  if (victims.length === 0) return { used: 0, max: key.unbindMax, unboundFps: [] };
-
-  const month = monthKey();
-  const chainIds = await collectAncestorKeyIds(key);
-  const used = await unbindRepo()
-    .createQueryBuilder('u')
-    .where('u.month = :month', { month })
-    .andWhere('u.keyId IN (:...ids)', { ids: chainIds })
-    .getCount();
-  if (key.unbindMax === 0) {
-    throw new ApiError('该卡密已关闭解绑，无法在新设备登录，请联系客服', 1005);
+  const inspection = await inspectAccountUnbind(accountId, excludeMachineFps);
+  if (!inspection) return null;
+  if (!inspection.allowed) throw accountUnbindQuotaError(inspection);
+  if (inspection.cost === 0) {
+    return { used: inspection.unbindUsed, max: inspection.unbindLimit, unboundFps: [] };
   }
-  if (key.unbindMax !== -1 && used + victims.length > key.unbindMax) {
-    throw new ApiError(
-      `本月解绑次数已用尽（已用 ${used}/${key.unbindMax} 次），请下月再试或联系客服增加次数`,
-      1005
+
+  return AppDataSource.transaction(async (manager) => {
+    const key = await manager
+      .getRepository(LicenseKey)
+      .findOne({ where: { id: inspection.keyId }, lock: { mode: 'pessimistic_write' } });
+    // 事务内复核：卡密状态可能已被并发修改，按无需换机处理
+    if (!key || key.bound !== 1 || key.status !== 1) {
+      return { used: inspection.unbindUsed, max: inspection.unbindLimit, unboundFps: [] };
+    }
+
+    const excluded = excludedFpSet(excludeMachineFps);
+    const deviceRepoInTx = manager.getRepository(Device);
+    const victims = (await deviceRepoInTx.findBy({ keyId: key.id, status: 1 })).filter(
+      (d) => !excluded.has(d.machineFp)
     );
-  }
 
-  const now = new Date();
-  const serverTime = nowSec();
-  for (const device of victims) {
-    device.status = 0;
-    device.unbindAt = now;
-    await deviceRepo().save(device);
-    await unbindRepo().save(unbindRepo().create({ keyId: key.id, deviceId: device.id, month }));
-    await hbRepo().save(
-      hbRepo().create({
-        keyId: key.id,
-        deviceId: device.id,
-        action: 3,
-        clientTime: String(serverTime),
-        ip: opts.ip || null,
-        appVersion: opts.appVersion || null,
-        detail: '账号在新设备登录，自动解绑旧设备（扣减本月解绑次数）',
-      })
-    );
-  }
-  return {
-    used: used + victims.length,
-    max: key.unbindMax,
-    unboundFps: victims.map((d) => d.machineFp),
-  };
+    // 事务内重新统计本月已用次数（并发下以事务内为准，避免返回过期配额）
+    const month = monthKey();
+    const chainIds = await collectAncestorKeyIds(key, manager.getRepository(LicenseKey));
+    const used = await manager
+      .getRepository(UnbindLog)
+      .createQueryBuilder('u')
+      .where('u.month = :month', { month })
+      .andWhere('u.keyId IN (:...ids)', { ids: chainIds })
+      .getCount();
+    if (victims.length === 0) {
+      return { used, max: key.unbindMax, unboundFps: [] };
+    }
+    if (key.unbindMax === 0) {
+      throw new ApiError('该卡密已关闭解绑，无法在新设备登录，请联系客服', 1005);
+    }
+    if (key.unbindMax !== -1 && used + victims.length > key.unbindMax) {
+      throw new ApiError(
+        `本月解绑次数已用尽（已用 ${used}/${key.unbindMax} 次），请下月再试或联系客服增加次数`,
+        1005
+      );
+    }
+
+    const now = new Date();
+    const serverTime = nowSec();
+    const unbindRepoInTx = manager.getRepository(UnbindLog);
+    const hbRepoInTx = manager.getRepository(Heartbeat);
+    for (const device of victims) {
+      device.status = 0;
+      device.unbindAt = now;
+      await deviceRepoInTx.save(device);
+      await unbindRepoInTx.save(
+        unbindRepoInTx.create({ keyId: key.id, deviceId: device.id, month })
+      );
+      await hbRepoInTx.save(
+        hbRepoInTx.create({
+          keyId: key.id,
+          deviceId: device.id,
+          action: 3,
+          clientTime: String(serverTime),
+          ip: opts.ip || null,
+          appVersion: opts.appVersion || null,
+          detail: '账号在新设备登录，自动解绑旧设备（扣减本月解绑次数）',
+        })
+      );
+    }
+    return {
+      used: used + victims.length,
+      max: key.unbindMax,
+      unboundFps: victims.map((d) => d.machineFp),
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

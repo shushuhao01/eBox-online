@@ -83,8 +83,27 @@ export function removeClient(res: Response): void {
   stopKeepaliveIfIdle();
 }
 
+/**
+ * 账号通道公告转发器：账号模式客户端没有本机卡密，无法连接 /notice/stream，
+ * 由 AccountEventService 在加载时注册，公告变更时同步推送到账号 SSE 连接。
+ * 用注册方式而非直接 import，避免 NoticeBroadcaster ← ConfigService 的循环依赖。
+ */
+let accountSink: ((event: NoticeEvent) => number) | null = null;
+
+export function setAccountNoticeSink(sink: (event: NoticeEvent) => number): void {
+  accountSink = sink;
+}
+
 /** 广播公告变更到所有在线连接，返回实际写入成功的连接数。 */
 export function broadcastNotice(event: NoticeEvent): number {
+  // 账号模式（Bearer token）连接与卡密模式连接各自独立，两边都要送达
+  if (accountSink) {
+    try {
+      accountSink(event);
+    } catch (e) {
+      logger.warn(`SSE 公告广播（账号通道）失败：${String(e)}`);
+    }
+  }
   const total = clients.size;
   if (total === 0) {
     logger.info('SSE 公告广播：当前无客户端保持实时连接，公告将在客户端下次心跳/启动时同步');

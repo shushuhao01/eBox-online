@@ -20,7 +20,12 @@ import {
 import { loadSmtpConfig } from './SmtpConfigService';
 import { sendTemplate, sendTemplateToEmail } from './NotifyService';
 import { isValidMainlandPhone } from './AliyunSmsService';
-import { consumeUnbindForAccountLogin } from './KeyService';
+import {
+  consumeUnbindForAccountLogin,
+  inspectAccountUnbind,
+  accountUnbindQuotaError,
+  AccountUnbindQuota,
+} from './KeyService';
 import { pushKick } from './AccountEventService';
 
 const accountRepo = () => AppDataSource.getRepository(Account);
@@ -66,6 +71,8 @@ export interface LoginInput {
   appVersion?: string;
   ip?: string;
   userAgent?: string;
+  /** 个人席位换机确认：首次登录不带；用户确认后以 true 重发，才真正解绑/扣次数 */
+  confirmSwitch?: boolean;
 }
 
 export function normalizeLogin(raw: string): string {
@@ -197,6 +204,10 @@ export interface LoginResult {
   token: string;
   expiresAt: Date;
   account: Account;
+  /** 个人席位本月解绑配额（企业账号 / 无绑定卡密时不返回） */
+  unbindUsed?: number;
+  unbindLimit?: number;
+  unbindRemaining?: number;
 }
 
 async function upsertDevice(accountId: string, input: LoginInput): Promise<void> {
@@ -244,13 +255,19 @@ async function resolveSeatLimit(account: Account): Promise<number> {
 
 /**
  * 登录占位：
- * - 个人账号：按卡密绑定的设备换机——新机器登录时自动解绑旧机器（旧机器是否退出/在线都不影响），
- *   并扣减本月解绑次数；同一台机器重复登录不扣次数。次数用尽时抛错，登录页直接展示提示文案。
+ * - 个人账号：按卡密绑定的设备换机——新机器登录时解绑旧机器（旧机器是否退出/在线都不影响），
+ *   并扣减本月解绑次数；同一台机器重复登录不扣次数。
+ *   换机需要用户确认：首次登录只做检查并抛 DEVICE_SWITCH_REQUIRED，用户确认后带
+ *   confirmSwitch=true 重发才真正解绑/扣次数。次数用尽时抛错，登录页直接展示提示文案。
  * - 企业账号：按购买席位管理（在线设备超席位时踢最久未活跃的），不占解绑额度。
  */
-async function claimDeviceSlot(account: Account, input: LoginInput): Promise<void> {
+async function claimDeviceSlot(
+  account: Account,
+  input: LoginInput
+): Promise<AccountUnbindQuota | null> {
   const fp = String(input.deviceFp || '').trim();
   const kickFps = new Set<string>();
+  let quota: AccountUnbindQuota | null = null;
 
   if (account.enterpriseId) {
     const limit = await resolveSeatLimit(account);
@@ -270,10 +287,17 @@ async function claimDeviceSlot(account: Account, input: LoginInput): Promise<voi
       ip: input.ip,
       appVersion: input.appVersion,
     });
+    if (res) {
+      quota = {
+        unbindUsed: res.used,
+        unbindLimit: res.max,
+        unbindRemaining: res.max === -1 ? -1 : Math.max(0, res.max - res.used),
+      };
+    }
     res?.unboundFps.forEach((f) => kickFps.add(f));
   }
 
-  if (kickFps.size === 0) return;
+  if (kickFps.size === 0) return quota;
 
   const now = new Date();
   for (const victimFp of kickFps) {
@@ -295,6 +319,7 @@ async function claimDeviceSlot(account: Account, input: LoginInput): Promise<voi
       .execute();
     pushKick(account.id, '您的账号已在新设备登录，本机已自动下线', victimFp);
   }
+  return quota;
 }
 
 /** 按 用户名 / 邮箱 / 手机号 定位账号（登录统一入口）。 */
@@ -368,7 +393,36 @@ export async function loginAccount(input: LoginInput): Promise<LoginResult> {
     throw invalid;
   }
 
-  await claimDeviceSlot(account, input);
+  // 换机两步协议：先检查是否需要换机，未确认时不解绑、不扣次数、不踢人
+  const fp = String(input.deviceFp || '').trim();
+  if (!account.enterpriseId) {
+    const inspection = await inspectAccountUnbind(account.id, fp ? [fp] : []);
+    if (inspection && inspection.cost > 0) {
+      if (!inspection.allowed) throw accountUnbindQuotaError(inspection);
+      // 只有客户端显式传 false 才进入二次确认；未传该字段视为旧客户端，保持原有自动换机行为
+      if (input.confirmSwitch === false) {
+        const target = inspection.oldDeviceNames[0]
+          ? `旧设备「${inspection.oldDeviceNames[0]}」`
+          : '原设备';
+        throw new ApiError(
+          `检测到新设备登录，继续将解绑${target}并消耗 ${inspection.cost} 次本月解绑次数，是否继续？`,
+          1023,
+          200,
+          {
+            code: 'DEVICE_SWITCH_REQUIRED',
+            unbindUsed: inspection.unbindUsed,
+            unbindLimit: inspection.unbindLimit,
+            unbindRemaining: inspection.unbindRemaining,
+            switchCost: inspection.cost,
+            oldDeviceName: inspection.oldDeviceNames[0] || '',
+            oldDeviceCount: inspection.victimFps.length,
+          }
+        );
+      }
+    }
+  }
+
+  const quota = await claimDeviceSlot(account, input);
 
   account.lockCount = 0;
   account.lockedUntil = null;
@@ -393,7 +447,13 @@ export async function loginAccount(input: LoginInput): Promise<LoginResult> {
     })
   );
 
-  return { token, expiresAt, account };
+  const result: LoginResult = { token, expiresAt, account };
+  if (quota) {
+    result.unbindUsed = quota.unbindUsed;
+    result.unbindLimit = quota.unbindLimit;
+    result.unbindRemaining = quota.unbindRemaining;
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -588,7 +648,9 @@ export async function requestPasswordReset(input: { login: string; ip?: string }
     throw new ApiError('当前未配置邮件服务，请联系客服重置密码', 1013);
   }
   const login = normalizeLogin(input.login);
-  const account = await accountRepo().findOneBy({ login });
+  // 客户端支持用户名 / 邮箱 / 手机号登录，找回密码也必须按同一规则定位账号，
+  // 否则用邮箱或手机号会静默返回“已发送”却永远收不到验证码。
+  const account = await findAccountByIdentifier(login);
   const email = account?.email || (account && isEmailLike(login) ? login : null);
   if (!account || !email) return { sent: true, expireMinutes: RESET_CODE_MINUTES };
 
@@ -618,7 +680,8 @@ export async function requestPasswordReset(input: { login: string; ip?: string }
 /** 重置码 + 新密码；成功后清空重置码、解锁账号并吊销全部会话 */
 export async function resetPasswordByCode(input: { login: string; code: string; newPassword: string }): Promise<void> {
   const login = normalizeLogin(input.login);
-  const account = await accountRepo().findBy({ login }).then((list) => list[0] || null);
+  // 与找回密码入口保持一致：用户名 / 邮箱 / 手机号都能重置
+  const account = await findAccountByIdentifier(login);
   const invalid = new ApiError('重置码无效或已过期，请重新获取', 1015);
   if (!account || !account.resetCodeHash || !account.resetCodeExpire) throw invalid;
 

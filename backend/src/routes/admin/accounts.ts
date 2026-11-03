@@ -15,8 +15,8 @@ import { ApiError } from '../../middleware/errorHandler';
 import { writeOperationLog } from '../../services/LogService';
 import { revokeAccountSessions } from '../../services/AccountService';
 import { pushKick } from '../../services/AccountEventService';
-import { getEntitlements, findEffectiveKey } from '../../services/EntitlementService';
-import { toKeySummary } from '../../services/LicenseAccountService';
+import { getEntitlements, findEffectiveKey, keyIsPermanent } from '../../services/EntitlementService';
+import { toKeySummary, keyDurationDays } from '../../services/LicenseAccountService';
 import { resolveLocation } from '../../services/SiteAnalyticsService';
 import { generateTempPassword, hashPassword } from '../../utils/accountCrypto';
 
@@ -38,6 +38,22 @@ function keyPlanLabel(durationDays: number): string {
  * 管理后台 · 账号运营（M1）
  * 列表 / 解锁 / 重置密码 / 启停用；所有写操作落 operation_logs。
  */
+
+/**
+ * 卡密权威到期时间：账号体系以 account_expire_at 为准；
+ * 老数据（时长制/换机码）回退 expire_at，再回退「激活时间 + 时长」。
+ * 永久卡返回 null（由 permanent 标记）。
+ */
+function keyEffectiveExpireAt(k: LicenseKey): Date | null {
+  if (keyIsPermanent(k)) return null;
+  if (k.accountExpireAt) return new Date(k.accountExpireAt);
+  const sec = Number(k.expireAt || 0);
+  if (sec > 0) return new Date(sec * 1000);
+  const days = keyDurationDays(k);
+  const start = k.activatedAt || k.usedAt;
+  if (days > 0 && start) return new Date(new Date(start).getTime() + days * 86400 * 1000);
+  return null;
+}
 
 async function scalar(sql: string, params: unknown[] = []): Promise<number> {
   const rows: Array<Record<string, unknown>> = await AppDataSource.query(sql, params);
@@ -136,6 +152,18 @@ router.get('/', async (req, res) => {
     const versionMap = new Map<string, string>();
     const planMap = new Map<string, string>();
     if (ids.length) {
+      // 客户端版本：优先账号设备上报（客户端登录/心跳写入），回退卡密设备心跳
+      const acctDevices = await AppDataSource.getRepository(AccountDevice)
+        .createQueryBuilder('ad')
+        .where('ad.accountId IN (:...ids)', { ids })
+        .andWhere('ad.appVersion IS NOT NULL')
+        .orderBy('ad.lastActiveAt', 'DESC')
+        .getMany();
+      for (const d of acctDevices) {
+        const aid = String(d.accountId || '');
+        if (aid && d.appVersion && !versionMap.has(aid)) versionMap.set(aid, d.appVersion);
+      }
+
       const devices = await AppDataSource.getRepository(Device)
         .createQueryBuilder('d')
         .where('d.accountId IN (:...ids)', { ids })
@@ -299,26 +327,31 @@ router.get('/:id/detail', async (req, res) => {
         : null,
       entitlements,
       currentKey: effectiveKey ? toKeySummary(effectiveKey, effectiveKey.id) : null,
-      keys: keys.map((k) => ({
-        id: k.id,
-        code: k.code,
-        type: k.type,
-        tier: k.tier,
-        level: k.level,
-        tierCode: k.tierCode,
-        durationDays: k.durationDays,
-        seats: k.seats,
-        status: k.status,
-        bound: k.bound,
-        unbindMax: k.unbindMax,
-        enterpriseId: k.enterpriseId,
-        activatedAt: k.activatedAt,
-        accountExpireAt: k.accountExpireAt,
-        expireAt: k.expireAt,
-        usedAt: k.usedAt,
-        createdAt: k.createdAt,
-        remark: k.remark,
-      })),
+      keys: keys.map((k) => {
+        const effectiveExpireAt = keyEffectiveExpireAt(k);
+        return {
+          id: k.id,
+          code: k.code,
+          type: k.type,
+          tier: k.tier,
+          level: k.level,
+          tierCode: k.tierCode,
+          durationDays: k.durationDays,
+          seats: k.seats,
+          status: k.status,
+          bound: k.bound,
+          unbindMax: k.unbindMax,
+          enterpriseId: k.enterpriseId,
+          activatedAt: k.activatedAt,
+          permanent: keyIsPermanent(k),
+          effectiveExpireAt: effectiveExpireAt ? effectiveExpireAt.toISOString() : null,
+          accountExpireAt: k.accountExpireAt,
+          expireAt: k.expireAt,
+          usedAt: k.usedAt,
+          createdAt: k.createdAt,
+          remark: k.remark,
+        };
+      }),
       devices: acctDevices.map((d) => ({
         id: d.id,
         machineFp: d.machineFp,

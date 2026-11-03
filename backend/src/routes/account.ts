@@ -30,6 +30,7 @@ import { getAccountSummary, getAccountTrend } from '../services/TeamDashboardSer
 import { buildClientConfig } from '../services/SkuService';
 import { redeemUpgradeCode } from '../services/VoucherService';
 import { getConfigValue } from '../services/ConfigService';
+import { getClientEvent } from '../services/AgencyService';
 import {
   isSmsEnabled,
   isValidMainlandPhone,
@@ -69,6 +70,11 @@ const loginSchema = Joi.object({
   deviceName: Joi.string().allow('').max(128).default(''),
   os: Joi.string().allow('').max(128).default(''),
   appVersion: Joi.string().allow('').max(32).default(''),
+  /**
+   * 个人席位换机确认：false = 只做预检并要求客户端确认；true = 用户已确认，执行解绑扣次；
+   * 不传 = 旧客户端，保持原有自动换机行为（向后兼容）
+   */
+  confirmSwitch: Joi.boolean().optional(),
 });
 
 function maskFp(fp: string | null): string {
@@ -119,10 +125,18 @@ router.post('/account/login', async (req, res) => {
         status: result.account.status,
         enterpriseId: result.account.enterpriseId,
       },
+      // 个人席位本月解绑配额（企业账号 / 无绑定卡密时不返回，兼容旧客户端）
+      ...(result.unbindUsed !== undefined
+        ? {
+            unbindUsed: result.unbindUsed,
+            unbindLimit: result.unbindLimit,
+            unbindRemaining: result.unbindRemaining,
+          }
+        : {}),
       ...(await entitlementPayload(result.account)),
     }, '登录成功');
   } catch (e) {
-    if (e instanceof ApiError) return fail(res, e.message, e.code);
+    if (e instanceof ApiError) return fail(res, e.message, e.code, e.status || 200, e.data);
     throw e;
   }
 });
@@ -436,7 +450,8 @@ router.get('/account/events', requireAccount, async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
 
-    addAccountClient(auth.account.id, res, entitlements, String(req.query.machineFp || ''));
+    // 账号模式没有本机卡密：公告/代理商随账号长连接一起下发（首次连接先给快照）
+    addAccountClient(auth.account.id, res, entitlements, String(req.query.machineFp || ''), await getClientEvent());
     const cleanup = () => removeAccountClient(auth.account.id, res);
     req.on('close', cleanup);
     req.on('error', cleanup);

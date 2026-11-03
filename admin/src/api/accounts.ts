@@ -71,6 +71,8 @@ export interface AccountKeyRow {
   unbindMax: number
   enterpriseId: string | null
   activatedAt: string | null
+  permanent: boolean
+  effectiveExpireAt: string | null
   accountExpireAt: string | null
   expireAt: string | null
   usedAt: string | null

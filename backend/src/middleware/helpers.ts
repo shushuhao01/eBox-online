@@ -6,8 +6,8 @@ import { env } from '../config/env';
 export function ok(res: Response, data?: unknown, msg = 'ok') {
   res.json({ code: 0, msg, data: data ?? null });
 }
-export function fail(res: Response, msg: string, code = 1, status = 200) {
-  res.status(status).json({ code, msg, data: null });
+export function fail(res: Response, msg: string, code = 1, status = 200, data?: unknown) {
+  res.status(status).json({ code, msg, data: data ?? null });
 }
 
 export interface AuthPayload {
