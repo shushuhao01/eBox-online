@@ -316,6 +316,20 @@
                 </div>
               </div>
             </el-form-item>
+            <el-form-item label="商城购买链接">
+              <div style="width: 100%">
+                <el-input
+                  v-model="buyUrl"
+                  placeholder="https://mall.example.com/buy"
+                  clearable
+                  style="width: 100%"
+                />
+                <div class="text-secondary">
+                  个人中心 / 用户中心的续费、升级、升企业版、购买卡密等弹窗里「去商城购买」按钮跳转此链接；
+                  升企业版优先用上方对应档位链接，未配置时用此链接；留空则回退客户端内置购买页
+                </div>
+              </div>
+            </el-form-item>
           </el-form>
           <div class="text-secondary" style="margin-bottom: 12px">
             客户端只对「普通版」卡密显示升级入口，可升级目标为同档位的高档位（高级版）；此处按 4 个档位时长下发商品页链接，
@@ -367,6 +381,8 @@ const UPGRADE_DURATIONS: Array<{ key: string; label: string }> = [
 
 const upgradeUrls = reactive<Record<string, string>>({ month: '', quarter: '', year: '', permanent: '' })
 const seatAddonMallUrl = ref('')
+// 通用商城购买链接：个人中心 / 用户中心各弹窗「去商城购买」按钮的兜底地址
+const buyUrl = ref('')
 const savingMall = ref(false)
 
 /** 固定档位 code：个人/企业 × 普通/高级 × 4 时长（价格 SKU 已移除） */
@@ -392,6 +408,7 @@ function buildUpgradeLinks(): Record<string, string> {
 async function loadMallLink() {
   const state = await getUpgradeLinks()
   seatAddonMallUrl.value = state.seatAddonMallUrl || ''
+  buyUrl.value = state.buyUrl || ''
   for (const g of UPGRADE_DURATIONS) {
     const hit = tierCodesOf(g.key).find((code) => !!state.links[code])
     upgradeUrls[g.key] = hit ? state.links[hit] : ''
@@ -404,6 +421,7 @@ async function saveMallLink() {
     const res = await saveUpgradeLinks({
       links: buildUpgradeLinks(),
       seatAddonMallUrl: seatAddonMallUrl.value.trim(),
+      buyUrl: buyUrl.value.trim(),
     })
     ElMessage.success(`已保存并推送（在线客户端 ${res.delivered} 个）`)
   } finally {

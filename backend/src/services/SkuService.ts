@@ -27,6 +27,8 @@ export interface ClientConfigView {
   disclaimerVersion: number;
   upgradeLinks: Record<string, string>;
   seatAddonMallUrl: string;
+  /** 通用商城购买链接：个人中心 / 用户中心各弹窗「去商城购买」按钮的兜底跳转地址 */
+  buyUrl: string;
   ipResourceVersion: number;
   configVersion: number;
   tiers: ClientTierView[];
@@ -76,6 +78,11 @@ export async function getSeatAddonMallUrl(): Promise<string> {
   return getConfigValue('seat_addon_mall_url', '');
 }
 
+/** 通用商城购买链接（个人中心 / 用户中心弹窗「去商城购买」按钮，空=客户端回退内置地址） */
+export async function getClientBuyUrl(): Promise<string> {
+  return getConfigValue('client_buy_url', '');
+}
+
 function parsePositive(raw: string, fallback: number): number {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
@@ -83,9 +90,10 @@ function parsePositive(raw: string, fallback: number): number {
 
 /** 客户端配置整包（/api/config/client 与 SSE config 事件同构） */
 export async function buildClientConfig(): Promise<ClientConfigView> {
-  const [links, seatAddonMallUrl, disclaimerRaw, ipVersionRaw, configVersionRaw] = await Promise.all([
+  const [links, seatAddonMallUrl, buyUrl, disclaimerRaw, ipVersionRaw, configVersionRaw] = await Promise.all([
     getUpgradeLinks(),
     getSeatAddonMallUrl(),
+    getClientBuyUrl(),
     getConfigValue('disclaimer_version', '1'),
     getConfigValue('ip_resource_version', '1'),
     getConfigValue('config_version', '1'),
@@ -94,6 +102,7 @@ export async function buildClientConfig(): Promise<ClientConfigView> {
     disclaimerVersion: parsePositive(disclaimerRaw, 1),
     upgradeLinks: links,
     seatAddonMallUrl,
+    buyUrl,
     ipResourceVersion: parsePositive(ipVersionRaw, 1),
     configVersion: parsePositive(configVersionRaw, 1),
     tiers: listClientTiers().map((t) => ({ ...t, mallUrl: links[t.code] || '' })),
@@ -103,6 +112,7 @@ export async function buildClientConfig(): Promise<ClientConfigView> {
 export interface SaveMallConfigInput {
   upgradeLinks?: Record<string, unknown>;
   seatAddonMallUrl?: string;
+  buyUrl?: string;
 }
 
 export interface SaveMallConfigResult {
@@ -112,8 +122,8 @@ export interface SaveMallConfigResult {
 
 /** 保存商城链接：仅接受固定档位 code，URL 必须 http(s) 或空（空=联系客服） */
 export async function saveMallConfig(input: SaveMallConfigInput): Promise<SaveMallConfigResult> {
-  if (input.upgradeLinks === undefined && input.seatAddonMallUrl === undefined) {
-    throw new ApiError('至少需要提交升级链接或扩容码商城链接', 400, 400);
+  if (input.upgradeLinks === undefined && input.seatAddonMallUrl === undefined && input.buyUrl === undefined) {
+    throw new ApiError('至少需要提交升级链接、扩容码商城链接或商城购买链接', 400, 400);
   }
   if (input.upgradeLinks !== undefined) {
     const codeSet = new Set(listClientTiers().map((t) => t.code));
@@ -133,6 +143,13 @@ export async function saveMallConfig(input: SaveMallConfigInput): Promise<SaveMa
       throw new ApiError('扩容码商城链接必须以 http(s):// 开头', 400, 400);
     }
     await saveConfigValue('seat_addon_mall_url', url, '扩容码商城链接');
+  }
+  if (input.buyUrl !== undefined) {
+    const url = String(input.buyUrl ?? '').trim();
+    if (url && !/^https?:\/\//i.test(url)) {
+      throw new ApiError('商城购买链接必须以 http(s):// 开头', 400, 400);
+    }
+    await saveConfigValue('client_buy_url', url, '客户端通用商城购买链接');
   }
   const nextVersion = parsePositive(await getConfigValue('config_version', '1'), 1) + 1;
   await saveConfigValue('config_version', String(nextVersion), '客户端配置版本号');
