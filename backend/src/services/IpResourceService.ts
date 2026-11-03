@@ -1,4 +1,3 @@
-import net from 'net';
 import zlib from 'zlib';
 import { TextDecoder } from 'util';
 import { AppDataSource } from '../config/database';
@@ -31,20 +30,6 @@ const enterpriseRepo = () => AppDataSource.getRepository(Enterprise);
 const accountRepo = () => AppDataSource.getRepository(Account);
 const deviceRepo = () => AppDataSource.getRepository(AccountDevice);
 
-const TEST_TIMEOUT_MS = 5000;
-const TEST_CONCURRENCY = 10;
-
-/** 探测目标与客户端「网络出口」测试保持一致：ip-api.com 为主，ifconfig.me 兜底 */
-const PROBE_TARGETS: Record<IpProxyType, { host: string; port: number }[]> = {
-  socks5: [
-    { host: 'ip-api.com', port: 80 },
-    { host: 'ifconfig.me', port: 80 },
-  ],
-  http: [
-    { host: 'ip-api.com', port: 443 },
-    { host: 'ifconfig.me', port: 443 },
-  ],
-};
 const STALE_BIND_MS = 10 * 60 * 1000;
 const MAX_COMMIT_ROWS = 500;
 
@@ -507,201 +492,6 @@ export async function parseIpRows(
   };
 }
 
-interface ProbeResult {
-  ok: boolean;
-  latencyMs: number;
-  error: string;
-}
-
-/** SOCKS5 / HTTP 代理握手（单目标，5s 超时） */
-function probeProxyOnce(
-  proxyType: IpProxyType,
-  host: string,
-  port: number,
-  username: string,
-  password: string,
-  target: { host: string; port: number }
-): Promise<ProbeResult> {
-  return new Promise((resolve) => {
-    const started = Date.now();
-    let settled = false;
-    let buffer = Buffer.alloc(0);
-    let stage = 0;
-    const socket = net.createConnection({ host, port });
-    socket.setTimeout(TEST_TIMEOUT_MS);
-
-    const finish = (ok: boolean, error = '') => {
-      if (settled) return;
-      settled = true;
-      const latencyMs = Date.now() - started;
-      try {
-        socket.destroy();
-      } catch {
-        /* ignore */
-      }
-      resolve({ ok, latencyMs, error });
-    };
-
-    socket.on('timeout', () => finish(false, '连接超时（5 秒）'));
-    socket.on('error', (e) => finish(false, `连接失败：${e.message}`));
-
-    socket.on('connect', () => {
-      if (proxyType === 'socks5') {
-        const methods = username ? [0x00, 0x02] : [0x00];
-        socket.write(Buffer.from([0x05, methods.length, ...methods]));
-      } else {
-        let head = `CONNECT ${target.host}:${target.port} HTTP/1.1\r\nHost: ${target.host}:${target.port}\r\nProxy-Connection: keep-alive\r\n`;
-        if (username) {
-          head += `Proxy-Authorization: Basic ${Buffer.from(`${username}:${password}`, 'utf8').toString('base64')}\r\n`;
-        }
-        head += '\r\n';
-        socket.write(head, 'latin1');
-      }
-    });
-
-    socket.on('data', (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk]);
-
-      if (proxyType === 'http') {
-        const text = buffer.toString('latin1');
-        const end = text.indexOf('\r\n\r\n');
-        if (end < 0 && buffer.length < 8192) return;
-        const statusLine = text.split('\r\n')[0] || '';
-        const m = statusLine.match(/HTTP\/\d\.\d\s+(\d{3})/);
-        if (!m) return finish(false, '代理返回内容无法识别');
-        const status = Number(m[1]);
-        if (status === 200) return finish(true);
-        if (status === 407) return finish(false, '代理认证失败（账号或密码错误）');
-        return finish(false, `代理返回 HTTP ${status}`);
-      }
-
-      if (stage === 0) {
-        if (buffer.length < 2) return;
-        const ver = buffer[0];
-        const method = buffer[1];
-        buffer = buffer.subarray(2);
-        if (ver !== 0x05) return finish(false, '不是 SOCKS5 代理');
-        if (method === 0x00) {
-          stage = 2;
-          sendSocksConnect();
-        } else if (method === 0x02) {
-          const u = Buffer.from(username, 'utf8');
-          const p = Buffer.from(password, 'utf8');
-          socket.write(Buffer.concat([Buffer.from([0x01, u.length]), u, Buffer.from([p.length]), p]));
-          stage = 1;
-        } else if (method === 0xff) {
-          return finish(false, '代理不接受当前认证方式');
-        }
-        return;
-      }
-      if (stage === 1) {
-        if (buffer.length < 2) return;
-        const status = buffer[1];
-        buffer = buffer.subarray(2);
-        if (status !== 0x00) return finish(false, '代理认证失败（账号或密码错误）');
-        stage = 2;
-        sendSocksConnect();
-        return;
-      }
-      if (stage === 2) {
-        if (buffer.length < 4) return;
-        const rep = buffer[1];
-        const atyp = buffer[3];
-        let need = 4;
-        if (atyp === 0x01) need = 4 + 4 + 2;
-        else if (atyp === 0x04) need = 4 + 16 + 2;
-        else if (atyp === 0x03) need = 4 + 1 + (buffer[4] || 0) + 2;
-        if (buffer.length < need) return;
-        buffer = buffer.subarray(need);
-        if (rep !== 0x00) {
-          const reasons: Record<number, string> = {
-            1: '代理服务器错误',
-            2: '代理规则不允许连接',
-            3: '网络不可达',
-            4: '目标主机不可达',
-            5: '目标拒绝连接',
-            6: 'TTL 过期',
-            7: '不支持的命令',
-            8: '不支持的地址类型',
-          };
-          return finish(false, reasons[rep] || `SOCKS5 握手失败（${rep}）`);
-        }
-        return finish(true);
-      }
-    });
-
-    function sendSocksConnect() {
-      const hostBuf = Buffer.from(target.host, 'utf8');
-      const portBuf = Buffer.from([(target.port >> 8) & 0xff, target.port & 0xff]);
-      socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00, 0x03, hostBuf.length]), hostBuf, portBuf]));
-    }
-  });
-}
-
-/**
- * 代理连通性探测：按客户端同样的目标依次尝试（ip-api.com → ifconfig.me）。
- * 与客户端「网络出口」测试保持一致，避免客户端能连、导入测试却报目标被拒的情况。
- */
-async function probeProxy(
-  proxyType: IpProxyType,
-  host: string,
-  port: number,
-  username: string,
-  password: string
-): Promise<ProbeResult> {
-  let last: ProbeResult = { ok: false, latencyMs: 0, error: '测试失败' };
-  for (const target of PROBE_TARGETS[proxyType]) {
-    const result = await probeProxyOnce(proxyType, host, port, username, password, target);
-    if (result.ok) return result;
-    last = result;
-  }
-  return last;
-}
-
-/** 并发执行 */
-async function runWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let cursor = 0;
-  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    while (cursor < items.length) {
-      const idx = cursor++;
-      results[idx] = await fn(items[idx]);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
-export interface IpTestResult {
-  line: number;
-  ok: boolean;
-  latencyMs: number;
-  error: string;
-}
-
-/** 三段式第 2 段：连通测试（不入库） */
-export async function testIpRows(account: Account, rows: IpRowInput[]): Promise<{ results: IpTestResult[]; passCount: number; failCount: number }> {
-  await resolvePoolForManage(account);
-  const list = Array.isArray(rows) ? rows.slice(0, MAX_COMMIT_ROWS) : [];
-  if (!list.length) throw new ApiError('请先提供待测试的资源', 400);
-  const results = await runWithConcurrency(list, TEST_CONCURRENCY, async (row) => {
-    const proxyType = normalizeProxyType(String(row.proxyType || 'socks5')) || 'socks5';
-    const host = String(row.host || '').trim();
-    const port = Number(row.port || 0);
-    const line = Number(row.line || 0);
-    if (!isValidHost(host) || !Number.isInteger(port) || port < 1 || port > 65535) {
-      return { line, ok: false, latencyMs: 0, error: '地址或端口格式不正确' };
-    }
-    const probe = await probeProxy(proxyType, host, port, String(row.username || ''), String(row.password || ''));
-    return { line, ok: probe.ok, latencyMs: probe.latencyMs, error: probe.error };
-  });
-  return {
-    results,
-    passCount: results.filter((r) => r.ok).length,
-    failCount: results.filter((r) => !r.ok).length,
-  };
-}
-
 export interface IpCommitResult {
   created: number;
   updated: number;
@@ -952,30 +742,66 @@ export async function setResourceStatus(account: Account, resourceId: string, st
   await writeOperationLog(account.id, 'ip.resource.status', `${r.host}:${r.port}`, status === 1 ? '启用资源' : '停用资源', '');
 }
 
-/** 单条重测：失败只标异常，不删除 */
-export async function testResource(account: Account, resourceId: string): Promise<{ ok: boolean; latencyMs: number; error: string }> {
+/** 读取资源并校验当前账号的访问权限（下发凭据 / 回传测试结果共用） */
+async function loadResourceForAccount(
+  account: Account,
+  resourceId: string
+): Promise<{ ctx: IpPoolContext; r: IpResource }> {
   const ctx = await resolvePoolForRead(account);
   const r = await resourceRepo().findOneBy({ id: resourceId });
   if (!r) throw new ApiError('资源不存在', 4004, 404);
-  if (ctx.scope === 2 && ctx.role === 'member') {
-    const a = await assignmentRepo().findOneBy({ resourceId: r.id, memberAccountId: account.id, status: 1 });
-    const a2 = await assignmentRepo().findOneBy({ resourceId: r.id, memberAccountId: account.id, status: 2 });
-    if (!a && !a2) throw new ApiError('无权操作该资源', 4003, 403);
-  } else if (ctx.scope === 1 && String(r.ownerAccountId) !== String(account.id)) {
+  if (ctx.scope === 2) {
+    if (String(r.scope) !== '2' || String(r.enterpriseId) !== String(ctx.enterpriseId)) {
+      throw new ApiError('无权操作该资源', 4003, 403);
+    }
+    if (ctx.role === 'member') {
+      const a = await assignmentRepo().findOneBy({ resourceId: r.id, memberAccountId: account.id, status: 1 });
+      const a2 = await assignmentRepo().findOneBy({ resourceId: r.id, memberAccountId: account.id, status: 2 });
+      if (!a && !a2) throw new ApiError('无权操作该资源', 4003, 403);
+    }
+  } else if (String(r.ownerAccountId) !== String(account.id)) {
     throw new ApiError('无权操作该资源', 4003, 403);
   }
-  const probe = await probeProxy(
-    (r.proxyType === 'http' ? 'http' : 'socks5') as IpProxyType,
-    r.host,
-    r.port,
-    r.username,
-    decryptSecret(r.passwordEnc)
-  );
-  r.health = probe.ok ? 2 : 3;
-  r.latencyMs = probe.latencyMs;
+  return { ctx, r };
+}
+
+/**
+ * 本机连通测试用的明文凭据
+ * 服务端探测走机房出口，会被按授权 IP 放行的代理拒绝，故测试在客户端本机执行；
+ * 只有资源所有者 / 企业管理员 / 已分配且允许明文可见的成员才能取到。
+ */
+export async function getResourceCredentials(
+  account: Account,
+  resourceId: string
+): Promise<{ proxyType: IpProxyType; host: string; port: number; username: string; password: string }> {
+  const { ctx, r } = await loadResourceForAccount(account, resourceId);
+  if (ctx.scope === 2 && ctx.role === 'member') {
+    const a = await assignmentRepo().findOneBy({ resourceId: r.id, memberAccountId: account.id });
+    if (!a || a.plaintextVisible !== 1) {
+      throw new ApiError('该资源未向你开放明文凭据', 4003, 403);
+    }
+  }
+  return {
+    proxyType: (r.proxyType === 'http' ? 'http' : 'socks5') as IpProxyType,
+    host: r.host,
+    port: r.port,
+    username: r.username,
+    password: decryptSecret(r.passwordEnc),
+  };
+}
+
+/** 客户端本机测试结果回传：只更新健康度、延迟与检查时间 */
+export async function reportResourceProbe(
+  account: Account,
+  resourceId: string,
+  probeOk: boolean,
+  latencyMs: number
+): Promise<void> {
+  const { r } = await loadResourceForAccount(account, resourceId);
+  r.health = probeOk ? 2 : 3;
+  r.latencyMs = Math.max(0, Math.min(600000, Math.round(latencyMs)));
   r.lastCheckAt = new Date();
   await resourceRepo().save(r);
-  return { ok: probe.ok, latencyMs: probe.latencyMs, error: probe.error };
 }
 
 /** 可用资源：个人池未占用 / 成员已分配未占用 */

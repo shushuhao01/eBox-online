@@ -8,15 +8,15 @@ import {
   commitIpRows,
   deleteResource,
   getPoolMode,
+  getResourceCredentials,
   listAvailable,
   listResources,
   parseIpFile,
   parseIpRows,
   releaseResource,
+  reportResourceProbe,
   setPoolMode,
   setResourceStatus,
-  testIpRows,
-  testResource,
 } from '../services/IpResourceService';
 
 const router = Router();
@@ -76,20 +76,6 @@ router.post('/ip/resources/parse-file', async (req, res) => {
     const buffer = Buffer.from(value.content, 'base64');
     if (!buffer.length) throw new ApiError('文件内容为空', 400);
     const result = await parseIpFile(req.accountAuth!.account, value.name, buffer);
-    ok(res, result);
-  } catch (e) {
-    if (sendError(res, e)) return;
-    throw e;
-  }
-});
-
-// POST /api/ip/resources/test（连通测试：并发 5、单条 5 秒超时，不入库）
-router.post('/ip/resources/test', async (req, res) => {
-  try {
-    const schema = Joi.object({ rows: Joi.array().items(rowSchema).min(1).max(500).required() });
-    const { error, value } = schema.validate(req.body);
-    if (error) throw new ApiError(`参数错误：${error.message}`, 400, 400);
-    const result = await testIpRows(req.accountAuth!.account, value.rows);
     ok(res, result);
   } catch (e) {
     if (sendError(res, e)) return;
@@ -206,11 +192,28 @@ router.post('/ip/release', async (req, res) => {
   }
 });
 
-// POST /api/ip/resources/:id/test（单条重测：失败只标异常，不删除）
-router.post('/ip/resources/:id/test', async (req, res) => {
+// GET /api/ip/resources/:id/credentials（本机测试用：下发一次明文凭据，仅所有者 / 企业管理员 / 明文可见成员）
+router.get('/ip/resources/:id/credentials', async (req, res) => {
   try {
-    const result = await testResource(req.accountAuth!.account, String(req.params.id));
-    ok(res, result, result.ok ? '连接正常' : '连接失败，已标记为异常');
+    const data = await getResourceCredentials(req.accountAuth!.account, String(req.params.id));
+    ok(res, data);
+  } catch (e) {
+    if (sendError(res, e)) return;
+    throw e;
+  }
+});
+
+// POST /api/ip/resources/:id/probe-result（客户端本机探测结果回传，服务端不再重复探测）
+router.post('/ip/resources/:id/probe-result', async (req, res) => {
+  try {
+    const schema = Joi.object({
+      ok: Joi.boolean().required(),
+      latencyMs: Joi.number().integer().min(0).max(600000).default(0),
+    });
+    const { error, value } = schema.validate(req.body);
+    if (error) throw new ApiError(`参数错误：${error.message}`, 400, 400);
+    await reportResourceProbe(req.accountAuth!.account, String(req.params.id), value.ok, value.latencyMs);
+    ok(res, null);
   } catch (e) {
     if (sendError(res, e)) return;
     throw e;
