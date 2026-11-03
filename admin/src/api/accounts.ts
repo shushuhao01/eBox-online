@@ -18,6 +18,10 @@ export interface AccountItem {
   clientVersion: string | null
   /** 卡密档位：月卡/季卡/年卡/永久，未绑卡时为 null */
   keyPlan: string | null
+  /** 身份版本：1=个人 2=企业（取当前生效卡密，无生效卡密时为 null） */
+  tier: number | null
+  /** 身份等级：1=普通 2=高级（取当前生效卡密，无生效卡密时为 null） */
+  level: number | null
   lastLoginAt: string | null
   createdAt: string
 }

@@ -366,6 +366,7 @@ const LICENSE_KEY_COLUMNS: Array<{ name: string; ddl: string }> = [
   { name: 'enterprise_id', ddl: 'BIGINT UNSIGNED NULL' },
   { name: 'activated_at', ddl: 'DATETIME NULL' },
   { name: 'account_expire_at', ddl: 'DATETIME NULL' },
+  { name: 'account_start_at', ddl: 'DATETIME NULL' },
   { name: 'replaced_by', ddl: 'BIGINT UNSIGNED NULL' },
 ];
 

@@ -21,13 +21,15 @@ const keyRepo = () => AppDataSource.getRepository(LicenseKey);
 export interface ActivateAccountInput {
   code: string;
   machineFp: string;
-  mode?: 'renew' | 'upgrade';
+  mode?: 'renew' | 'upgrade' | 'defer';
   disclaimerVersion?: number;
   appVersion?: string;
   os?: string;
   ip?: string;
   clientTime?: number;
   enterpriseName?: string;
+  /** 「升企业版」入口专用：卡密必须为企业版，否则拒绝（不影响普通激活/续费/绑定） */
+  requireEnterprise?: boolean;
 }
 
 export interface KeySummary {
@@ -125,6 +127,10 @@ export interface ActivateAccountResult {
   key: KeySummary;
   renewed: boolean;
   upgraded: boolean;
+  /** 预约升级：新卡在当前卡到期后自动生效 */
+  deferred: boolean;
+  /** 预约升级的生效时间（ISO；空=立即生效） */
+  startAt: string | null;
   enterpriseCode?: string | null;
 }
 
@@ -146,6 +152,11 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
   const targetLevel = key.level === 2 ? 2 : 1;
   const targetDays = keyDurationDays(key);
   const targetPermanent = targetTier === 1 && key.durationSec === '0' && key.type !== 2;
+
+  // 「升企业版」入口：只接受企业版卡密（卡密本身不编码版本，必须由服务端按登记信息校验）
+  if (input.requireEnterprise && targetTier !== 2) {
+    throw new ApiError('该卡密不是企业版卡密，无法用于升级企业版本', 2010);
+  }
 
   // ===== 方向矩阵（需求 9.4）=====
   if (targetTier === 1) {
@@ -174,26 +185,57 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
     throw new ApiError('企业已到期，请先续费后再操作', 2007);
   }
 
-  const upgraded = !!currentKey && (targetTier > currentTier || targetLevel > currentLevel);
-  if (upgraded && input.mode !== 'upgrade') {
-    const days = currentKey && !keyIsPermanent(currentKey)
-      ? Math.max(0, Math.ceil((keyExpireSeconds(currentKey) * 1000 - Date.now()) / 86400000))
-      : 0;
-    throw new ApiError(
-      `升级将覆盖当前卡密，剩余 ${days} 天不再折算，请确认后继续`,
-      2001
-    );
-  }
-
-  const isNewBinding = !key.accountId;
   const nowSec = Math.floor(Date.now() / 1000);
   const now = new Date();
+  const upgraded = !!currentKey && (targetTier > currentTier || targetLevel > currentLevel);
+  // 当前卡剩余天数（二选一弹窗展示用）
+  const remainingDays = currentKey && !keyIsPermanent(currentKey)
+    ? Math.max(0, Math.ceil((keyExpireSeconds(currentKey) * 1000 - Date.now()) / 86400000))
+    : 0;
+  // 「到期后顺延升级」只支持同版本内普通→高级（个人/企业）；跨版本升级需立即生效
+  const canDefer = !!currentKey && targetTier === currentTier && !keyIsPermanent(currentKey);
+  if (upgraded && input.mode !== 'upgrade' && input.mode !== 'defer') {
+    const currentExpireSec = currentKey ? keyExpireSeconds(currentKey) : 0;
+    const deferStartSec = canDefer ? Math.max(nowSec, currentExpireSec) : 0;
+    // 由服务端预计算两种生效方式的日期，客户端直接用于二选一弹窗
+    throw new ApiError(
+      `升级将覆盖当前卡密，剩余 ${remainingDays} 天不再折算，请选择生效方式`,
+      2001,
+      200,
+      {
+        canDefer,
+        remainingDays,
+        durationDays: targetDays,
+        permanent: targetPermanent,
+        targetTier,
+        targetLevel,
+        currentExpireAt: currentExpireSec > 0 ? new Date(currentExpireSec * 1000).toISOString() : null,
+        deferStartAt: canDefer ? new Date(deferStartSec * 1000).toISOString() : null,
+        deferExpireAt: canDefer && !targetPermanent
+          ? new Date((deferStartSec + targetDays * 86400) * 1000).toISOString()
+          : null,
+        immediateExpireAt: targetPermanent ? null : new Date((nowSec + targetDays * 86400) * 1000).toISOString(),
+      }
+    );
+  }
+  if (upgraded && input.mode === 'defer' && !canDefer) {
+    throw new ApiError('升级到其他版本不支持预约生效，请选择立即生效', 2008);
+  }
+  const deferred = upgraded && input.mode === 'defer';
+
+  const isNewBinding = !key.accountId;
 
   // 续费顺延：同版本同级别取当前到期与当前时间的较大值 + 本卡时长；永久不再叠加
   let newExpireSec = 0;
   let permanent = false;
+  let startSec = 0;
   if (targetPermanent) {
     permanent = true;
+    if (deferred) startSec = Math.max(nowSec, keyExpireSeconds(currentKey as LicenseKey));
+  } else if (deferred) {
+    // 预约升级：从当前卡到期日（或现在，取较大值）开始计算新卡时长
+    startSec = Math.max(nowSec, keyExpireSeconds(currentKey as LicenseKey));
+    newExpireSec = startSec + targetDays * 86400;
   } else if (isNewBinding && currentKey && !upgraded && currentTier === targetTier && currentLevel === targetLevel) {
     const base = keyIsPermanent(currentKey) ? nowSec : Math.max(nowSec, keyExpireSeconds(currentKey));
     newExpireSec = base + targetDays * 86400;
@@ -216,8 +258,8 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
   if (activated.expired) throw new ApiError('该卡密已过期', 1004);
   if (activated.exceeded) throw new ApiError('该卡密已在其他设备使用，请先解绑', 1011);
 
-  // 覆盖升级：旧卡置为“已覆盖失效”并保留 replaced_by
-  if (upgraded || (currentKey && currentTier === targetTier && currentLevel === targetLevel && key.accountId && key.id !== currentKey.id)) {
+  // 覆盖升级：旧卡置为“已覆盖失效”并保留 replaced_by（预约升级不失效旧卡，到期后自动切换）
+  if (!deferred && (upgraded || (currentKey && currentTier === targetTier && currentLevel === targetLevel && key.accountId && key.id !== currentKey.id))) {
     const oldKeys = await keyRepo()
       .createQueryBuilder('k')
       .where('k.account_id = :accountId', { accountId: account.id })
@@ -253,6 +295,7 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
   key.durationDays = targetDays;
   key.seats = seats;
   key.activatedAt = key.activatedAt || now;
+  key.accountStartAt = deferred ? new Date(startSec * 1000) : null;
   key.accountExpireAt = permanent ? null : new Date(newExpireSec * 1000);
   await keyRepo().save(key);
 
@@ -295,6 +338,8 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
     key: toKeySummary(key, key.id),
     renewed: !upgraded && !!currentKey,
     upgraded,
+    deferred,
+    startAt: deferred ? new Date(startSec * 1000).toISOString() : null,
     enterpriseCode,
   };
 }
@@ -348,6 +393,8 @@ export async function bindExistingKey(account: Account, input: BindKeyInput): Pr
     key: toKeySummary(key, key.id),
     renewed: false,
     upgraded: false,
+    deferred: false,
+    startAt: null,
     enterpriseCode: null,
   };
 }

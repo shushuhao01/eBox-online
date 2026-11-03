@@ -15,7 +15,7 @@ import { ApiError } from '../../middleware/errorHandler';
 import { writeOperationLog } from '../../services/LogService';
 import { revokeAccountSessions } from '../../services/AccountService';
 import { pushKick } from '../../services/AccountEventService';
-import { getEntitlements, findEffectiveKey, keyIsPermanent } from '../../services/EntitlementService';
+import { getEntitlements, findEffectiveKey, keyIsPermanent, keyExpireSeconds } from '../../services/EntitlementService';
 import { toKeySummary, keyDurationDays } from '../../services/LicenseAccountService';
 import { resolveLocation } from '../../services/SiteAnalyticsService';
 import { generateTempPassword, hashPassword } from '../../utils/accountCrypto';
@@ -151,6 +151,8 @@ router.get('/', async (req, res) => {
     const ids = rows.map((r) => r.id);
     const versionMap = new Map<string, string>();
     const planMap = new Map<string, string>();
+    // 身份：个人普通 / 个人高级 / 企业普通 / 企业高级（取当前生效卡密的 tier × level）
+    const identityMap = new Map<string, { tier: number; level: number }>();
     if (ids.length) {
       // 客户端版本：优先账号设备上报（客户端登录/心跳写入），回退卡密设备心跳
       const acctDevices = await AppDataSource.getRepository(AccountDevice)
@@ -186,6 +188,49 @@ router.get('/', async (req, res) => {
         const aid = String(k.accountId || '');
         if (aid && !planMap.has(aid)) planMap.set(aid, keyPlanLabel(k.durationDays));
       }
+
+      // 当前生效卡密 → 身份（企业账号优先企业卡，与客户端权益计算保持一致）
+      const nowSec = Math.floor(Date.now() / 1000);
+      const keyRank = (k: LicenseKey) => (keyIsPermanent(k) ? Number.MAX_SAFE_INTEGER : keyExpireSeconds(k));
+      const isEffective = (k: LicenseKey) => {
+        if (k.status !== 1) return false;
+        if (!keyIsPermanent(k)) {
+          const exp = keyExpireSeconds(k);
+          if (exp > 0 && exp < nowSec) return false;
+        }
+        const start = k.accountStartAt ? Math.floor(new Date(k.accountStartAt).getTime() / 1000) : 0;
+        return !(start > nowSec);
+      };
+      const activeBy = new Map<string, LicenseKey>();
+      const collect = (list: LicenseKey[], ownerOf: (k: LicenseKey) => string) => {
+        for (const k of list) {
+          if (!isEffective(k)) continue;
+          const owner = ownerOf(k);
+          if (!owner) continue;
+          const old = activeBy.get(owner);
+          if (!old || keyRank(k) > keyRank(old)) activeBy.set(owner, k);
+        }
+      };
+      const activeKeys = await AppDataSource.getRepository(LicenseKey)
+        .createQueryBuilder('k')
+        .where('k.accountId IN (:...ids)', { ids })
+        .andWhere('k.status = 1')
+        .getMany();
+      collect(activeKeys, (k) => String(k.accountId || ''));
+      if (entIds.length) {
+        const entKeys = await AppDataSource.getRepository(LicenseKey)
+          .createQueryBuilder('k')
+          .where('k.enterpriseId IN (:...entIds)', { entIds })
+          .andWhere('k.status = 1')
+          .getMany();
+        collect(entKeys, (k) => String(k.enterpriseId || ''));
+      }
+      for (const a of rows) {
+        const key = a.enterpriseId
+          ? activeBy.get(String(a.enterpriseId))
+          : activeBy.get(String(a.id));
+        if (key) identityMap.set(String(a.id), { tier: key.tier === 2 ? 2 : 1, level: key.level === 2 ? 2 : 1 });
+      }
     }
 
     ok(res, {
@@ -210,6 +255,9 @@ router.get('/', async (req, res) => {
           enterpriseName: ent?.name || null,
           clientVersion: versionMap.get(String(a.id)) || null,
           keyPlan: planMap.get(String(a.id)) || null,
+          // 身份：1=个人 2=企业 × 1=普通 2=高级（无生效卡密时为 null）
+          tier: identityMap.get(String(a.id))?.tier ?? null,
+          level: identityMap.get(String(a.id))?.level ?? null,
           lastLoginAt: a.lastLoginAt,
           createdAt: a.createdAt,
         };

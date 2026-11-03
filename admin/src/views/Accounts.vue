@@ -48,8 +48,8 @@
         </el-table-column>
         <el-table-column label="身份" width="92" align="center">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.role === 2 ? 'warning' : row.role === 3 ? 'info' : ''">
-              {{ ROLE_TEXT[row.role] || row.role }}
+            <el-tag size="small" :type="identityTagType(row)">
+              {{ identityLabel(row) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -357,6 +357,16 @@ import {
 } from '@/api/accounts'
 
 const ROLE_TEXT: Record<number, string> = { 1: '个人', 2: '企业管理员', 3: '企业成员' }
+/** 身份列：按当前生效卡密的 版本 × 等级 显示；无生效卡密时回退账号角色 */
+function identityLabel(row: AccountItem): string {
+  if (!row.tier || !row.level) return ROLE_TEXT[row.role] || String(row.role)
+  return `${row.tier === 2 ? '企业' : '个人'}${row.level === 2 ? '高级' : '普通'}`
+}
+function identityTagType(row: AccountItem): '' | 'success' | 'warning' | 'info' {
+  if (row.tier === 2) return 'warning'
+  if (row.level === 2) return 'success'
+  return ''
+}
 const TIER_TEXT: Record<number, string> = { 1: '个人版', 2: '企业版' }
 const KEY_LEVEL_TEXT: Record<number, string> = { 1: '普通', 2: '高级' }
 const VERSION_TEXT: Record<string, string> = { none: '未授权', personal: '个人版', enterprise: '企业版' }

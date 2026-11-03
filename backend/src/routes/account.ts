@@ -25,6 +25,7 @@ import {
   toKeySummary,
 } from '../services/LicenseAccountService';
 import { getEntitlements, findEffectiveKey } from '../services/EntitlementService';
+import { inspectAccountUnbind } from '../services/KeyService';
 import { reportProxyBlocked } from '../services/ProxyBlockService';
 import { getAccountSummary, getAccountTrend } from '../services/TeamDashboardService';
 import { buildClientConfig } from '../services/SkuService';
@@ -145,11 +146,23 @@ router.post('/account/login', async (req, res) => {
 router.get('/account/profile', requireAccount, async (req, res) => {
   try {
     const auth = req.accountAuth!;
-    const [profile, extra] = await Promise.all([
+    const [profile, extra, unbind] = await Promise.all([
       getProfile(auth.account),
       entitlementPayload(auth.account),
+      // 个人席位本月换机（解绑）配额：企业账号 / 无绑定卡密时为 null，不下发
+      inspectAccountUnbind(auth.account.id, []),
     ]);
-    ok(res, { ...profile, ...extra });
+    ok(res, {
+      ...profile,
+      ...extra,
+      ...(unbind
+        ? {
+            unbindUsed: unbind.unbindUsed,
+            unbindLimit: unbind.unbindLimit,
+            unbindRemaining: unbind.unbindRemaining,
+          }
+        : {}),
+    });
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);
     throw e;
@@ -382,11 +395,13 @@ router.post('/license/activate', requireAccount, async (req, res) => {
     const { error, value } = Joi.object({
       code: Joi.string().required().max(200),
       machineFp: Joi.string().required().length(16).pattern(/^[0-9a-f]{16}$/),
-      mode: Joi.string().valid('renew', 'upgrade').default('renew'),
+      mode: Joi.string().valid('renew', 'upgrade', 'defer').default('renew'),
       disclaimerVersion: Joi.number().integer().min(1).optional(),
       appVersion: Joi.string().allow('').max(32).default(''),
       os: Joi.string().allow('').max(128).default(''),
       enterpriseName: Joi.string().allow('').max(128).default(''),
+      // 「升企业版」专用：要求卡密必须为企业版卡密，避免误用个人卡；其它入口不传
+      requireEnterprise: Joi.boolean().default(false),
     }).validate(req.body);
     if (error) return fail(res, `参数错误：${error.message}`, 400);
     const result = await activateForAccount(req.accountAuth!.account, {
@@ -397,7 +412,7 @@ router.post('/license/activate', requireAccount, async (req, res) => {
     pushEntitlementsForAccountId(req.accountAuth!.account.id).catch(() => undefined);
     ok(res, result, result.upgraded ? '升级成功' : result.renewed ? '续费成功' : '激活成功');
   } catch (e) {
-    if (e instanceof ApiError) return fail(res, e.message, e.code);
+    if (e instanceof ApiError) return fail(res, e.message, e.code, e.status || 200, e.data);
     throw e;
   }
 });

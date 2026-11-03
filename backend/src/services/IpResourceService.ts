@@ -1,4 +1,6 @@
 import net from 'net';
+import zlib from 'zlib';
+import { TextDecoder } from 'util';
 import { AppDataSource } from '../config/database';
 import { Account } from '../entities/account/Account';
 import { AccountDevice } from '../entities/account/AccountDevice';
@@ -135,6 +137,165 @@ function isValidHost(host: string): boolean {
 function splitRow(line: string): string[] {
   const parts = line.split(/\t|,|，/).map((s) => s.trim());
   return parts.slice(0, 6);
+}
+
+// ---------------------------------------------------------------------------
+// 文件导入：xlsx = ZIP + XML。客户端不做 inflate，原始字节 base64 上行后在这里解包。
+// ---------------------------------------------------------------------------
+
+function xmlDecode(raw: string): string {
+  return raw
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_m, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/** 解 zip：按中央目录定位每个文件，stored 直接取，deflate 用 zlib.inflateRaw 还原 */
+function unzipEntries(buf: Buffer): Map<string, Buffer> {
+  const entries = new Map<string, Buffer>();
+  if (buf.length < 22 || buf.readUInt32LE(0) !== 0x04034b50) return entries;
+  let eocd = -1;
+  const floor = Math.max(0, buf.length - 22 - 0xffff);
+  for (let i = buf.length - 22; i >= floor; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return entries;
+  const count = buf.readUInt16LE(eocd + 10);
+  let off = buf.readUInt32LE(eocd + 16);
+  for (let i = 0; i < count; i++) {
+    if (off + 46 > buf.length || buf.readUInt32LE(off) !== 0x02014b50) break;
+    const method = buf.readUInt16LE(off + 10);
+    const compSize = buf.readUInt32LE(off + 20);
+    const nameLen = buf.readUInt16LE(off + 28);
+    const extraLen = buf.readUInt16LE(off + 30);
+    const commentLen = buf.readUInt16LE(off + 32);
+    const localOff = buf.readUInt32LE(off + 42);
+    const name = buf.toString('utf8', off + 46, off + 46 + nameLen);
+    if (localOff + 30 <= buf.length && buf.readUInt32LE(localOff) === 0x04034b50) {
+      const dataStart = localOff + 30 + buf.readUInt16LE(localOff + 26) + buf.readUInt16LE(localOff + 28);
+      const raw = buf.subarray(dataStart, dataStart + compSize);
+      try {
+        if (method === 0) entries.set(name, raw);
+        else if (method === 8) entries.set(name, zlib.inflateRawSync(raw));
+      } catch {
+        // 单个 part 解压失败不影响其它 part
+      }
+    }
+    off += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
+}
+
+/** 列号：A→0，B→1，AA→26 */
+function columnIndex(ref: string): number {
+  const letters = /^[A-Z]+/i.exec(ref || '');
+  if (!letters) return -1;
+  let n = 0;
+  for (const ch of letters[0].toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+/** sharedStrings.xml → 索引表（富文本取所有 <t> 拼接） */
+function parseSharedStrings(xml: string): string[] {
+  const out: string[] = [];
+  const re = /<si\b[^>]*>([\s\S]*?)<\/si>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) {
+    const texts = [...m[1].matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map((t) => xmlDecode(t[1]));
+    out.push(texts.join(''));
+  }
+  return out;
+}
+
+/** sheet1.xml → 单元格矩阵（按 r 属性定位列，容忍缺列） */
+function parseSheetRows(xml: string, shared: string[]): string[][] {
+  const rows: string[][] = [];
+  const rowRe = /<row\b[^>]*>([\s\S]*?)<\/row>/g;
+  let rm: RegExpExecArray | null;
+  while ((rm = rowRe.exec(xml))) {
+    const cells: string[] = [];
+    const cellRe = /<c\b([^>]*?)\/>|<c\b([^>]*)>([\s\S]*?)<\/c>/g;
+    let cm: RegExpExecArray | null;
+    while ((cm = cellRe.exec(rm[1]))) {
+      const attrs = cm[1] ?? cm[2] ?? '';
+      const inner = cm[3] ?? '';
+      const ref = /\br="([A-Z]+\d+)"/i.exec(attrs)?.[1] || '';
+      const idx = ref ? columnIndex(ref) : cells.length;
+      if (idx < 0) continue;
+      const type = /\bt="([^"]+)"/.exec(attrs)?.[1] || '';
+      let value = '';
+      if (type === 'inlineStr') {
+        value = [...inner.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map((t) => xmlDecode(t[1])).join('');
+      } else {
+        const v = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(inner);
+        if (v) value = type === 's' ? shared[Number(v[1])] ?? '' : xmlDecode(v[1]);
+      }
+      while (cells.length < idx) cells.push('');
+      cells[idx] = value.trim();
+    }
+    rows.push(cells);
+  }
+  return rows;
+}
+
+/** 文本文件解码：优先严格 UTF-8，失败回退 GBK（Excel 在中文系统另存的 csv 常为 GBK） */
+function decodeTextFile(buf: Buffer): string {
+  const utf8 = buf.toString('utf8');
+  const text = utf8.includes('\uFFFD') ? (() => {
+    try {
+      return new TextDecoder('gbk').decode(buf);
+    } catch {
+      return utf8;
+    }
+  })() : utf8;
+  return text.replace(/^\uFEFF/, '');
+}
+
+/** 上传文件 → Tab 分隔的逐行文本（与粘贴导入共用 parseIpRows 的校验与去重） */
+export function extractIpLines(name: string, content: Buffer): string {
+  const lower = String(name || '').toLowerCase();
+  const isZip = content.length >= 4 && content.readUInt32LE(0) === 0x04034b50;
+  if (isZip || lower.endsWith('.xlsx')) {
+    const entries = unzipEntries(content);
+    const sheet = [...entries.keys()].filter((k) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(k)).sort()[0];
+    if (!sheet) throw new ApiError('无法读取 Excel 内容，请下载模板填写后上传', 400);
+    const shared = entries.get('xl/sharedStrings.xml');
+    const rows = parseSheetRows(entries.get(sheet)!.toString('utf8'), shared ? parseSharedStrings(shared.toString('utf8')) : []);
+    const lines: string[] = [];
+    for (const cells of rows) {
+      const values = cells.map((c) => (c || '').trim());
+      if (!values.some((v) => v.length > 0)) continue;
+      // 跳过模板表头与示例行
+      if (values[0].includes('类型') || values.some((v) => v === '地址')) continue;
+      if (values.some((v) => v.includes('示例行'))) continue;
+      while (values.length > 0 && values[values.length - 1] === '') values.pop();
+      // 类型列可留空；空首列去掉，避免被 parseIpRows 当成“内容为空”
+      if (values.length > 1 && values[0] === '') values.shift();
+      lines.push(values.join('\t'));
+    }
+    if (!lines.length) throw new ApiError('表格中没有可导入的数据，请按模板第一行的格式填写', 400);
+    return lines.join('\n');
+  }
+  const text = decodeTextFile(content).trim();
+  if (!text) throw new ApiError('文件内容为空', 400);
+  return text;
+}
+
+/** 文件解析入口：xlsx / csv / txt 统一转换成文本后走 parseIpRows */
+export async function parseIpFile(
+  account: Account,
+  name: string,
+  content: Buffer
+): Promise<{ rows: IpRowPreview[]; validCount: number; errorCount: number; duplicateCount: number }> {
+  return parseIpRows(account, extractIpLines(name, content));
 }
 
 function buildRow(raw: string, lineNo: number): IpRowPreview {

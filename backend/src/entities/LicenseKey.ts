@@ -93,6 +93,9 @@ export class LicenseKey {
   @Column({ name: 'account_expire_at', type: 'datetime', nullable: true, comment: '账号体系续费顺延后的权威到期时间' })
   accountExpireAt!: Date | null;
 
+  @Column({ name: 'account_start_at', type: 'datetime', nullable: true, comment: '升级码预约生效时间（空=立即生效）' })
+  accountStartAt!: Date | null;
+
   @Column({ type: 'bigint', name: 'replaced_by', unsigned: true, nullable: true, comment: '被哪张卡密覆盖升级' })
   replacedBy!: string | null;
 }

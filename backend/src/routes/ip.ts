@@ -10,6 +10,7 @@ import {
   getPoolMode,
   listAvailable,
   listResources,
+  parseIpFile,
   parseIpRows,
   releaseResource,
   setPoolMode,
@@ -55,6 +56,26 @@ router.post('/ip/resources/parse', async (req, res) => {
     const { error, value } = schema.validate(req.body);
     if (error) throw new ApiError(`参数错误：${error.message}`, 400, 400);
     const result = await parseIpRows(req.accountAuth!.account, value.text);
+    ok(res, result);
+  } catch (e) {
+    if (sendError(res, e)) return;
+    throw e;
+  }
+});
+
+// POST /api/ip/resources/parse-file（文件导入：xlsx / csv / txt 转文本后走同一套解析）
+router.post('/ip/resources/parse-file', async (req, res) => {
+  try {
+    const schema = Joi.object({
+      name: Joi.string().allow('').max(255).default(''),
+      // 原始文件 ≤3MB，base64 后约 4MB；上限留足余量，真实大小由解析端校验
+      content: Joi.string().max(6 * 1024 * 1024).required(),
+    });
+    const { error, value } = schema.validate(req.body);
+    if (error) throw new ApiError(`参数错误：${error.message}`, 400, 400);
+    const buffer = Buffer.from(value.content, 'base64');
+    if (!buffer.length) throw new ApiError('文件内容为空', 400);
+    const result = await parseIpFile(req.accountAuth!.account, value.name, buffer);
     ok(res, result);
   } catch (e) {
     if (sendError(res, e)) return;

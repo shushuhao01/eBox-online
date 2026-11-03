@@ -76,6 +76,13 @@ function isKeyExpired(key: LicenseKey, nowSec: number): boolean {
   return exp > 0 && exp < nowSec;
 }
 
+/** 预约生效的升级卡密（account_start_at 在未来）：生效前不参与权益计算 */
+function isKeyNotStarted(key: LicenseKey, nowSec: number): boolean {
+  const start = key.accountStartAt;
+  if (!start) return false;
+  return Math.floor(start.getTime() / 1000) > nowSec;
+}
+
 /** 账号可用的生效卡密（个人卡按 account_id；企业卡按 enterprise_id 或企业主账号） */
 export async function findActiveKeys(account: Account): Promise<LicenseKey[]> {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -98,7 +105,7 @@ export async function findActiveKeys(account: Account): Promise<LicenseKey[]> {
       .getMany();
   }
   return keys
-    .filter((k) => !isKeyExpired(k, nowSec))
+    .filter((k) => !isKeyExpired(k, nowSec) && !isKeyNotStarted(k, nowSec))
     .sort((a, b) => {
       const ea = keyIsPermanent(a) ? Number.MAX_SAFE_INTEGER : keyExpireSeconds(a);
       const eb = keyIsPermanent(b) ? Number.MAX_SAFE_INTEGER : keyExpireSeconds(b);
