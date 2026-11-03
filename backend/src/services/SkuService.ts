@@ -27,9 +27,9 @@ export interface ClientConfigView {
   disclaimerVersion: number;
   upgradeLinks: Record<string, string>;
   seatAddonMallUrl: string;
-  /** 通用商城购买链接：升企业版等弹窗「去商城购买」的兜底跳转地址 */
+  /** 升企业版购买链接：升企业版弹窗「去商城购买」的兜底跳转地址 */
   buyUrl: string;
-  /** 其他购买按钮链接：激活软件 / 续费 / 授权页购买 / 个人中心购买卡密 */
+  /** 商城购买链接：激活软件 / 续费 / 授权页购买 / 个人中心购买卡密 */
   otherBuyUrl: string;
   ipResourceVersion: number;
   configVersion: number;
@@ -80,12 +80,12 @@ export async function getSeatAddonMallUrl(): Promise<string> {
   return getConfigValue('seat_addon_mall_url', '');
 }
 
-/** 通用商城购买链接（升企业版等弹窗「去商城购买」按钮，空=客户端回退内置地址） */
+/** 升企业版购买链接（升企业版弹窗「去商城购买」按钮，空=客户端回退内置地址） */
 export async function getClientBuyUrl(): Promise<string> {
   return getConfigValue('client_buy_url', '');
 }
 
-/** 其他购买按钮链接（激活软件 / 续费 / 授权页购买 / 个人中心购买卡密，空=客户端回退内置地址） */
+/** 商城购买链接（激活软件 / 续费 / 授权页购买 / 个人中心购买卡密，空=客户端回退内置地址） */
 export async function getClientOtherBuyUrl(): Promise<string> {
   return getConfigValue('client_other_buy_url', '');
 }
@@ -138,7 +138,7 @@ export async function saveMallConfig(input: SaveMallConfigInput): Promise<SaveMa
     input.buyUrl === undefined &&
     input.otherBuyUrl === undefined
   ) {
-    throw new ApiError('至少需要提交升级链接、扩容码商城链接、商城购买链接或其他购买链接', 400, 400);
+    throw new ApiError('至少需要提交升级码链接、扩容码商城链接、升企业版购买链接或商城购买链接', 400, 400);
   }
   if (input.upgradeLinks !== undefined) {
     const codeSet = new Set(listClientTiers().map((t) => t.code));
@@ -162,16 +162,16 @@ export async function saveMallConfig(input: SaveMallConfigInput): Promise<SaveMa
   if (input.buyUrl !== undefined) {
     const url = String(input.buyUrl ?? '').trim();
     if (url && !/^https?:\/\//i.test(url)) {
-      throw new ApiError('商城购买链接必须以 http(s):// 开头', 400, 400);
+      throw new ApiError('升企业版购买链接必须以 http(s):// 开头', 400, 400);
     }
-    await saveConfigValue('client_buy_url', url, '客户端通用商城购买链接');
+    await saveConfigValue('client_buy_url', url, '升企业版购买链接（升企业版弹窗「去商城购买」）');
   }
   if (input.otherBuyUrl !== undefined) {
     const url = String(input.otherBuyUrl ?? '').trim();
     if (url && !/^https?:\/\//i.test(url)) {
-      throw new ApiError('其他购买链接必须以 http(s):// 开头', 400, 400);
+      throw new ApiError('商城购买链接必须以 http(s):// 开头', 400, 400);
     }
-    await saveConfigValue('client_other_buy_url', url, '客户端其他购买按钮链接（激活/续费/授权页/个人中心购买卡密）');
+    await saveConfigValue('client_other_buy_url', url, '商城购买链接（激活/续费/授权页/个人中心购买卡密）');
   }
   const nextVersion = parsePositive(await getConfigValue('config_version', '1'), 1) + 1;
   await saveConfigValue('config_version', String(nextVersion), '客户端配置版本号');

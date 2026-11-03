@@ -294,6 +294,10 @@
             <span class="page-title">客户端下发</span>
             <span class="text-secondary">保存后立即推送到在线客户端，无需重启</span>
           </div>
+          <div class="text-secondary" style="margin-bottom: 12px">
+            以下三类链接互相独立、互不影响：升级码链接（升级弹窗购买升级码）、升企业版购买链接（升企业版弹窗「去商城购买」）、
+            商城购买链接（激活软件 / 续费 / 授权页面购买激活码 / 个人中心购买卡密）。
+          </div>
           <el-form label-width="150px" style="max-width: 760px">
             <el-form-item v-for="g in UPGRADE_DURATIONS" :key="g.key" :label="`${g.label} · 普通升级高级`">
               <el-input
@@ -316,7 +320,7 @@
                 </div>
               </div>
             </el-form-item>
-            <el-form-item label="商城购买链接">
+            <el-form-item label="升企业版购买链接">
               <div style="width: 100%">
                 <el-input
                   v-model="buyUrl"
@@ -325,12 +329,12 @@
                   style="width: 100%"
                 />
                 <div class="text-secondary">
-                  升企业版弹窗（个人中心 / 用户中心 / 用户管理的「升企业版」入口）里「去商城购买」按钮跳转此链接；
+                  「升企业版」弹窗（个人中心 / 用户中心 / 用户管理的「升企业版」入口）里「去商城购买」按钮跳转此链接；
                   优先用上方对应档位链接，未配置时用此链接；留空则回退客户端内置购买页
                 </div>
               </div>
             </el-form-item>
-            <el-form-item label="其他购买链接">
+            <el-form-item label="商城购买链接">
               <div style="width: 100%">
                 <el-input
                   v-model="otherBuyUrl"
@@ -395,9 +399,9 @@ const UPGRADE_DURATIONS: Array<{ key: string; label: string }> = [
 
 const upgradeUrls = reactive<Record<string, string>>({ month: '', quarter: '', year: '', permanent: '' })
 const seatAddonMallUrl = ref('')
-// 升企业版弹窗「去商城购买」的兜底地址
+// 升企业版购买链接：升企业版弹窗「去商城购买」的兜底地址
 const buyUrl = ref('')
-// 其他购买按钮链接：激活 / 续费 / 授权页购买 / 个人中心购买卡密
+// 商城购买链接：激活 / 续费 / 授权页购买 / 个人中心购买卡密
 const otherBuyUrl = ref('')
 const savingMall = ref(false)
 
