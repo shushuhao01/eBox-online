@@ -13,6 +13,7 @@ import {
   type Entitlements,
 } from './EntitlementService';
 import { pushEntitlementsForAccountId } from './AccountEventService';
+import { isEnterpriseMember } from './LicenseAccountService';
 
 /**
  * 升级码 / 席位扩容码（M6）
@@ -211,6 +212,10 @@ export interface RedeemUpgradeResult {
 
 /** 客户端核销升级码：同档续费顺延，跨档覆盖升级（新到期从当前时间起算） */
 export async function redeemUpgradeCode(account: Account, rawCode: string): Promise<RedeemUpgradeResult> {
+  // 升级码作用于企业卡，只允许企业管理员核销，避免子账户替整个企业升级
+  if (await isEnterpriseMember(account)) {
+    throw new ApiError('子账户不能核销升级码，请联系企业管理员', 2002, 403);
+  }
   const code = String(rawCode || '').trim().toUpperCase();
   if (!code) throw new ApiError('请输入升级码', 400, 400);
   const record = await upgradeRepo().findOneBy({ code });

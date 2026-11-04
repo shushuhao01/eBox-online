@@ -103,7 +103,7 @@ function tierLabelOf(tier: number, level: number, durationDays: number): string 
 }
 
 /** 当前账号是否为企业成员（非管理员） */
-async function isEnterpriseMember(account: Account): Promise<boolean> {
+export async function isEnterpriseMember(account: Account): Promise<boolean> {
   if (!account.enterpriseId) return false;
   const rows: Array<{ role: number }> = await AppDataSource.query(
     'SELECT role FROM enterprise_members WHERE enterprise_id = ? AND account_id = ? LIMIT 1',
