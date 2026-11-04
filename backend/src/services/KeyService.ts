@@ -201,6 +201,14 @@ export async function clientActivate(
   if (key.status === 3 || (key.expireAt && Number(key.expireAt) < serverTime))
     return { ...unregisteredActivate(key), expired: true, online: true };
 
+  // 企业版卡密必须先走账号侧激活（激活时创建企业、分配席位）。
+  // 本接口是设备侧激活，旧客户端只走这里：未绑定账号就放行，会导致企业没被创建、
+  // 卡被绑死在一台机器上，团队无法使用。已绑定账号（accountId 非空）的放行，
+  // 因为账号侧激活成功后的本机写入正是再走一次本接口。
+  if (key.tier === 2 && !key.accountId) {
+    throw new ApiError('企业版卡密需登录账号后激活，请更新到最新版客户端并登录', 1013);
+  }
+
   // 绑定码：仅允许 1 台在线设备（status=1 在绑设备数 >=1 时拒绝新指纹）
   const activeDevices = await deviceRepo().findBy({ keyId: key.id, status: 1 });
   const existing = activeDevices.find((d) => d.machineFp === machineFp);
