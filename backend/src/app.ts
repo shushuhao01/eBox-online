@@ -69,8 +69,11 @@ app.use(
 app.use(
   cors({
     origin: (origin, cb) => {
-      if (!origin || env.corsOrigin.includes(origin)) return cb(null, true);
-      return cb(null, true); // 客户端为桌面程序（无 Origin），管理面板走同源；宽松处理
+      // 无 Origin：桌面客户端 / 服务端调用 / 同源请求预检，放行
+      if (!origin) return cb(null, true);
+      // 白名单内放行；其余拒绝（不返回 CORS 头，浏览器侧拦截）
+      if (env.corsOrigin.includes(origin)) return cb(null, true);
+      return cb(null, false);
     },
     credentials: false,
   })
@@ -123,6 +126,7 @@ for (const p of [
   '/account/register',
   '/account/password/forgot',
   '/account/password/reset',
+  '/account/phone/send-code',
   '/license/activate',
   '/account/upgrade-code/redeem',
   '/team/seat-addons/redeem',

@@ -23,3 +23,8 @@ export function login(data: { username: string; password: string }) {
 export function getProfile() {
   return get<UserInfo>('/auth/profile')
 }
+
+/** 退出登录（服务端令牌版本自增，旧 token 立即失效） */
+export function logout() {
+  return post<null>('/auth/logout')
+}

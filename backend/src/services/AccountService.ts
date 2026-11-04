@@ -481,13 +481,15 @@ export async function revokeSession(sessionId: string): Promise<void> {
   await sessionRepo().update({ id: sessionId }, { revokedAt: new Date() });
 }
 
-export async function revokeAccountSessions(accountId: string): Promise<void> {
-  await sessionRepo()
+/** 吊销账号会话；传 keepSessionId 时保留当前会话（用于本人改密后保持登录） */
+export async function revokeAccountSessions(accountId: string, keepSessionId?: string): Promise<void> {
+  const qb = sessionRepo()
     .createQueryBuilder()
     .update(AccountSession)
     .set({ revokedAt: new Date() })
-    .where('account_id = :accountId AND revoked_at IS NULL', { accountId })
-    .execute();
+    .where('account_id = :accountId AND revoked_at IS NULL', { accountId });
+  if (keepSessionId) qb.andWhere('id != :keepSessionId', { keepSessionId });
+  await qb.execute();
 }
 
 // ---------------------------------------------------------------------------
@@ -624,8 +626,13 @@ export interface ResetRequestResult {
   expireMinutes: number;
 }
 
-/** 已登录修改密码（本人） */
-export async function changePassword(account: Account, oldPassword: string, newPassword: string): Promise<void> {
+/** 已登录修改密码（本人）；keepSessionId 为当前会话，保留登录状态，其余设备全部下线 */
+export async function changePassword(
+  account: Account,
+  oldPassword: string,
+  newPassword: string,
+  keepSessionId?: string
+): Promise<void> {
   if (!(await verifyPassword(oldPassword, account.passwordHash))) {
     throw new ApiError('原密码错误', 1017);
   }
@@ -633,7 +640,8 @@ export async function changePassword(account: Account, oldPassword: string, newP
   assertPasswordStrength(newPassword);
   account.passwordHash = await hashPassword(newPassword);
   await accountRepo().save(account);
-  // 改密后吊销其他设备会话（保留当前会话由路由层决定，这里不处理）
+  // 改密后吊销其他设备会话（保留当前会话，避免本人被立即踢下线）
+  await revokeAccountSessions(account.id, keepSessionId);
   void sendTemplate('PASSWORD_CHANGED', { username: account.nickname || account.login });
 }
 

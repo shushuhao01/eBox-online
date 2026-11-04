@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS `users` (
   `status` TINYINT NOT NULL DEFAULT 1,           -- 1=启用 0=停用
   `last_login_at` DATETIME NULL,
   `last_login_ip` VARCHAR(64) NULL,
+  `token_version` INT NOT NULL DEFAULT 0,        -- 令牌版本：改密/退出后自增，旧 JWT 失效
+  `lock_count` INT NOT NULL DEFAULT 0,           -- 连续登录失败次数
+  `locked_until` DATETIME NULL,                  -- 登录锁定截止时间
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NULL ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

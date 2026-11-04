@@ -189,17 +189,24 @@ router.get('/team/trend', async (req, res) => {
 
 // ==================== IP 资源分配（M4） ====================
 
-// GET /api/team/ips?page=&pageSize=&keyword=&status=&memberId=（企业资源池）
+// GET /api/team/ips?page=&pageSize=&keyword=&status=&memberId=&health=&proxyType=&bound=（企业资源池）
 router.get('/team/ips', async (req, res) => {
   try {
     const status =
       req.query.status === undefined || req.query.status === '' ? undefined : Number(req.query.status);
+    const health =
+      req.query.health === undefined || req.query.health === '' ? undefined : Number(req.query.health);
+    const bound =
+      req.query.bound === undefined || req.query.bound === '' ? undefined : Number(req.query.bound);
     const result = await listEnterprisePool(req.accountAuth!.account, req.enterpriseAuth!, {
       page: Number(req.query.page) || 1,
       pageSize: Number(req.query.pageSize) || 20,
       keyword: String(req.query.keyword || ''),
       status: Number.isFinite(status) ? status : undefined,
       memberId: req.query.memberId ? String(req.query.memberId) : undefined,
+      health: Number.isFinite(health) ? health : undefined,
+      proxyType: req.query.proxyType ? String(req.query.proxyType) : undefined,
+      bound: Number.isFinite(bound) ? bound : undefined,
     });
     ok(res, result);
   } catch (e) {

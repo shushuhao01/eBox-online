@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
+import { AppDataSource } from '../config/database';
+import { User } from '../entities/User';
 
 // 统一响应：{ code, msg, data }
 export function ok(res: Response, data?: unknown, msg = 'ok') {
@@ -14,6 +16,8 @@ export interface AuthPayload {
   userId: string;
   username: string;
   role: number;
+  /** 令牌版本：与 users.token_version 不一致即视为已失效（旧 token 无此字段按 0 处理） */
+  ver?: number;
 }
 
 declare global {
@@ -38,7 +42,7 @@ export function signToken(payload: AuthPayload): string {
   return jwt.sign(payload, env.jwtSecret, { expiresIn } as jwt.SignOptions);
 }
 
-export function authRequired(req: Request, res: Response, next: NextFunction) {
+export async function authRequired(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!token) {
@@ -47,6 +51,15 @@ export function authRequired(req: Request, res: Response, next: NextFunction) {
   }
   try {
     const decoded = jwt.verify(token, env.jwtSecret) as AuthPayload;
+    // 令牌版本 + 启用状态校验：改密 / 退出登录 / 停用后旧 token 立即失效
+    const user = await AppDataSource.getRepository(User).findOne({
+      where: { id: decoded.userId },
+      select: ['id', 'status', 'tokenVersion'],
+    });
+    if (!user || user.status !== 1 || (user.tokenVersion || 0) !== (decoded.ver || 0)) {
+      res.status(401).json({ code: 401, msg: '登录已失效，请重新登录', data: null });
+      return;
+    }
     req.auth = decoded;
     next();
   } catch {

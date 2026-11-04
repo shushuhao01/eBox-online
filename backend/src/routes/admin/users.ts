@@ -46,6 +46,8 @@ router.put('/password', authRequired, async (req, res) => {
     const user = await repo.findOneBy({ id: req.auth!.userId });
     if (!user || !bcrypt.compareSync(value.oldPassword, user.passwordHash)) return fail(res, '原密码错误', 1004);
     user.passwordHash = bcrypt.hashSync(value.newPassword, 10);
+    // 改密后令牌版本自增：其他设备上的旧 token 立即失效，当前 token 也需重新登录
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
     await repo.save(user);
     await writeOperationLog(req.auth!.userId, '修改密码', user.username, null, clientIp(req));
     ok(res, null, '修改成功');

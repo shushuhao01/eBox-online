@@ -132,6 +132,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import { useUserStore } from '@/stores/user'
+import { logout as logoutApi } from '@/api/auth'
 import {
   getMessages, getUnreadCount, readMessage, readAllMessages, type SystemMessageRow,
 } from '@/api/notify'
@@ -351,6 +352,12 @@ async function onCommand(cmd: string) {
       confirmButtonText: '退出',
       cancelButtonText: '取消',
     })
+    // 服务端注销：令牌版本自增，避免旧 token 继续可用（失败不阻断本地退出）
+    try {
+      await logoutApi()
+    } catch {
+      /* 已过期或网络异常时直接本地退出 */
+    }
     store.logout()
     router.push('/login')
   }

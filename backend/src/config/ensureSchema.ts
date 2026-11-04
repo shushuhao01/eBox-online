@@ -135,6 +135,15 @@ const PATCH_TABLES: Array<{ table: string; columns: Array<{ name: string; ddl: s
       { name: 'link_url', ddl: 'VARCHAR(500) NULL DEFAULT NULL' },
     ],
   },
+  {
+    // 管理员账号：令牌版本（改密 / 退出登录后旧 JWT 失效）与登录失败锁定
+    table: 'users',
+    columns: [
+      { name: 'token_version', ddl: 'INT NOT NULL DEFAULT 0' },
+      { name: 'lock_count', ddl: 'INT NOT NULL DEFAULT 0' },
+      { name: 'locked_until', ddl: 'DATETIME NULL DEFAULT NULL' },
+    ],
+  },
 ];
 
 // ==================== 客户端代理商点击明细表 ====================

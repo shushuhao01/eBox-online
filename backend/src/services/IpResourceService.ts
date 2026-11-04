@@ -603,14 +603,22 @@ export async function commitIpRows(
 /** 资源列表（个人池 / 企业池 / 成员自己的资源） */
 export async function listResources(
   account: Account,
-  opts: { page?: number; pageSize?: number; keyword?: string; status?: number; bound?: number }
+  opts: {
+    page?: number;
+    pageSize?: number;
+    keyword?: string;
+    status?: number;
+    bound?: number;
+    health?: number;
+    proxyType?: string;
+  }
 ): Promise<{
   total: number;
   page: number;
   pageSize: number;
   storageMode: number;
   list: IpResourceView[];
-  stats: { total: number; assigned: number; inUse: number };
+  stats: { total: number; idle: number; assigned: number; inUse: number; abnormal: number; avgLatency: number };
 }> {
   const ctx = await resolvePoolForRead(account);
   const page = Math.max(1, Number(opts.page) || 1);
@@ -618,34 +626,64 @@ export async function listResources(
   const keyword = String(opts.keyword || '').trim();
 
   const qb = visibleResourceQuery(ctx, account);
+  // 汇总卡片统计整个资源池（不受 keyword / 状态 / 连通性 / 分配 / 分页影响）
+  const stats = await poolStats(visibleResourceQuery(ctx, account));
   if (keyword) {
     qb.andWhere('(r.host LIKE :kw OR r.username LIKE :kw OR r.remark LIKE :kw)', { kw: `%${keyword}%` });
   }
   if (opts.status === 1 || opts.status === 2) {
     qb.andWhere('r.status = :status', { status: opts.status });
   }
+  if (opts.bound === 1) {
+    qb.andWhere('EXISTS (SELECT 1 FROM ip_assignments ba WHERE ba.resource_id = r.id AND ba.status IN (1,2))');
+  } else if (opts.bound === 0) {
+    qb.andWhere('NOT EXISTS (SELECT 1 FROM ip_assignments ba WHERE ba.resource_id = r.id AND ba.status IN (1,2))');
+  }
+  if (opts.health === 1 || opts.health === 2 || opts.health === 3) {
+    qb.andWhere('r.health = :health', { health: opts.health });
+  }
+  if (opts.proxyType === 'socks5' || opts.proxyType === 'http') {
+    qb.andWhere('r.proxy_type = :proxyType', { proxyType: opts.proxyType });
+  }
   const total = await qb.getCount();
-  // 汇总卡片统计整个资源池（与分页 / 筛选无关），避免只反映当前页
-  const stats = await poolStats(qb);
   const rows = await qb.orderBy('r.id', 'DESC').skip((page - 1) * pageSize).take(pageSize).getMany();
-  const views = await decorateResources(rows, ctx, account);
-  const list = opts.bound === undefined ? views : views.filter((v) => (opts.bound === 1 ? v.assigned : !v.assigned));
+  const list = await decorateResources(rows, ctx, account);
   return { total, page, pageSize, storageMode: ctx.storageMode, list, stats };
 }
 
-/** 资源池汇总：全量总数 / 已分配（含使用中） / 使用中，不受 keyword、status、分页影响 */
-async function poolStats(base: SelectQueryBuilder<IpResource>): Promise<{ total: number; assigned: number; inUse: number }> {
+/** 资源池汇总：总数 / 空闲 / 已分配（含使用中） / 使用中 / 异常 / 平均延迟，不受筛选与分页影响 */
+async function poolStats(base: SelectQueryBuilder<IpResource>): Promise<{
+  total: number;
+  idle: number;
+  assigned: number;
+  inUse: number;
+  abnormal: number;
+  avgLatency: number;
+}> {
   const row = await base
     .clone()
     .leftJoin(IpAssignment, 'sa', 'sa.resource_id = r.id AND sa.status IN (1,2)')
     .select('COUNT(r.id)', 'total')
+    .addSelect('COALESCE(SUM(CASE WHEN sa.id IS NULL THEN 1 ELSE 0 END), 0)', 'idle')
     .addSelect('COALESCE(SUM(CASE WHEN sa.id IS NOT NULL THEN 1 ELSE 0 END), 0)', 'assigned')
     .addSelect('COALESCE(SUM(CASE WHEN sa.status = 2 THEN 1 ELSE 0 END), 0)', 'inUse')
-    .getRawOne<{ total: string; assigned: string; inUse: string }>();
+    .addSelect('COALESCE(SUM(CASE WHEN r.health = 3 THEN 1 ELSE 0 END), 0)', 'abnormal')
+    .addSelect('AVG(r.latency_ms)', 'avgLatency')
+    .getRawOne<{
+      total: string;
+      idle: string;
+      assigned: string;
+      inUse: string;
+      abnormal: string;
+      avgLatency: string | null;
+    }>();
   return {
     total: Number(row?.total || 0),
+    idle: Number(row?.idle || 0),
     assigned: Number(row?.assigned || 0),
     inUse: Number(row?.inUse || 0),
+    abnormal: Number(row?.abnormal || 0),
+    avgLatency: row?.avgLatency === null || row?.avgLatency === undefined ? -1 : Math.round(Number(row.avgLatency)),
   };
 }
 
@@ -858,6 +896,11 @@ export async function getResourceCredentials(
   resourceId: string
 ): Promise<{ proxyType: IpProxyType; host: string; port: number; username: string; password: string }> {
   const { ctx, r } = await loadResourceForAccount(account, resourceId);
+  // C-4 第二道防线：出口凭据只在权益仍含网络出口时下发（企业成员到期后同样拦截）
+  const ent = await getEntitlements(account);
+  if (!ent.caps.proxy) {
+    throw new ApiError('当前套餐不支持网络出口，请升级后使用', 4030, 403, { cap: 'proxy' });
+  }
   if (ctx.scope === 2 && ctx.role === 'member') {
     const a = await assignmentRepo().findOneBy({ resourceId: r.id, memberAccountId: account.id });
     if (!a || a.plaintextVisible !== 1) {
@@ -1016,6 +1059,9 @@ export interface TeamPoolQuery {
   keyword?: string;
   status?: number;
   memberId?: string;
+  health?: number;
+  proxyType?: string;
+  bound?: number;
 }
 
 /** 企业资源池列表（管理员） */
@@ -1030,7 +1076,7 @@ export async function listEnterprisePool(
   seats: number;
   usedSeats: number;
   list: IpResourceView[];
-  stats: { total: number; assigned: number; inUse: number };
+  stats: { total: number; idle: number; assigned: number; inUse: number; abnormal: number; avgLatency: number };
 }> {
   const page = Math.max(1, Number(opts.page) || 1);
   const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 20));
@@ -1050,6 +1096,17 @@ export async function listEnterprisePool(
   const stats = await poolStats(qb);
   if (keyword) qb.andWhere('(r.host LIKE :kw OR r.username LIKE :kw OR r.remark LIKE :kw)', { kw: `%${keyword}%` });
   if (opts.status === 1 || opts.status === 2) qb.andWhere('r.status = :status', { status: opts.status });
+  if (opts.health === 1 || opts.health === 2 || opts.health === 3) {
+    qb.andWhere('r.health = :health', { health: opts.health });
+  }
+  if (opts.proxyType === 'socks5' || opts.proxyType === 'http') {
+    qb.andWhere('r.proxy_type = :proxyType', { proxyType: opts.proxyType });
+  }
+  if (opts.bound === 1) {
+    qb.andWhere('EXISTS (SELECT 1 FROM ip_assignments ba WHERE ba.resource_id = r.id AND ba.status IN (1,2))');
+  } else if (opts.bound === 0) {
+    qb.andWhere('NOT EXISTS (SELECT 1 FROM ip_assignments ba WHERE ba.resource_id = r.id AND ba.status IN (1,2))');
+  }
   if (opts.memberId) {
     qb.innerJoin(IpAssignment, 'fa', 'fa.resource_id = r.id')
       .andWhere('fa.member_account_id = :memberId', { memberId: opts.memberId })

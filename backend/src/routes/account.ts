@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import Joi from 'joi';
 import { ok, fail, clientIp } from '../middleware/helpers';
 import { ApiError } from '../middleware/errorHandler';
@@ -174,10 +175,34 @@ router.get('/account/profile', requireAccount, async (req, res) => {
 // ---------------------------------------------------------------------------
 const PHONE_CODE_TTL_MS = 5 * 60 * 1000;
 const PHONE_CODE_COOLDOWN_MS = 60 * 1000;
+/** 发送配额（内存 TTL 计数，重启清零；仅用于防刷，不要求持久化） */
+const PHONE_SEND_ACCOUNT_DAILY_LIMIT = 10;
+const PHONE_SEND_IP_DAILY_LIMIT = 20;
+const PHONE_SEND_QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
 const phoneCodes = new Map<string, { code: string; expiresAt: number; sentAt: number; attempts: number }>();
+const phoneSendQuota = new Map<string, { count: number; resetAt: number }>();
 
 function genPhoneCode(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  // CSPRNG：避免 Math.random 可预测导致验证码被猜解
+  return String(crypto.randomInt(100000, 1000000));
+}
+
+/** 命中配额返回 true；首次计数时初始化窗口，顺带清理过期条目 */
+function exceedSendQuota(key: string, limit: number): boolean {
+  const now = Date.now();
+  if (phoneSendQuota.size > 5000) {
+    for (const [k, v] of phoneSendQuota) {
+      if (v.resetAt <= now) phoneSendQuota.delete(k);
+    }
+  }
+  const cur = phoneSendQuota.get(key);
+  if (!cur || cur.resetAt <= now) {
+    phoneSendQuota.set(key, { count: 1, resetAt: now + PHONE_SEND_QUOTA_WINDOW_MS });
+    return false;
+  }
+  if (cur.count >= limit) return true;
+  cur.count += 1;
+  return false;
 }
 
 // POST /api/v1/account/phone/send-code
@@ -196,6 +221,13 @@ router.post('/account/phone/send-code', requireAccount, async (req, res) => {
     if (existing && now - existing.sentAt < PHONE_CODE_COOLDOWN_MS) {
       const wait = Math.ceil((PHONE_CODE_COOLDOWN_MS - (now - existing.sentAt)) / 1000);
       return fail(res, `请 ${wait} 秒后再获取验证码`, 429);
+    }
+    // 配额：单账号 / 单 IP 每日上限，防止短信轰炸与费用滥用
+    if (exceedSendQuota(`phone-send:account:${req.accountAuth!.account.id}`, PHONE_SEND_ACCOUNT_DAILY_LIMIT)) {
+      return fail(res, '今日获取验证码次数已达上限，请明日再试', 429);
+    }
+    if (exceedSendQuota(`phone-send:ip:${clientIp(req) || 'unknown'}`, PHONE_SEND_IP_DAILY_LIMIT)) {
+      return fail(res, '当前网络获取验证码过于频繁，请稍后再试', 429);
     }
     if (!(await isSmsEnabled())) return fail(res, '短信服务未启用，请联系管理员', 400);
     const smsConfig = await loadAliyunSmsConfig();
@@ -274,7 +306,7 @@ router.post('/account/password', requireAccount, async (req, res) => {
     }).validate(req.body);
     if (error) return fail(res, `参数错误：${error.message}`, 400);
     const auth = req.accountAuth!;
-    await changePassword(auth.account, value.oldPassword, value.newPassword);
+    await changePassword(auth.account, value.oldPassword, value.newPassword, auth.session.id);
     ok(res, null, '密码修改成功');
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);

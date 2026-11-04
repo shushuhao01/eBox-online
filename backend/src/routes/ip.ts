@@ -124,7 +124,7 @@ router.post('/ip/pool/mode', async (req, res) => {
   }
 });
 
-// GET /api/ip/resources?page=&pageSize=&keyword=&status=&bound=
+// GET /api/ip/resources?page=&pageSize=&keyword=&status=&bound=&health=&proxyType=
 router.get('/ip/resources', async (req, res) => {
   try {
     const num = (v: unknown) => (v === undefined || v === '' ? undefined : Number(v));
@@ -134,6 +134,8 @@ router.get('/ip/resources', async (req, res) => {
       keyword: String(req.query.keyword || ''),
       status: num(req.query.status),
       bound: num(req.query.bound),
+      health: num(req.query.health),
+      proxyType: req.query.proxyType ? String(req.query.proxyType) : undefined,
     });
     ok(res, result);
   } catch (e) {
