@@ -4,6 +4,7 @@ import { Enterprise } from '../entities/account/Enterprise';
 import { EnterpriseMember } from '../entities/account/EnterpriseMember';
 import { LicenseKey } from '../entities/LicenseKey';
 import { resolveMaxEnvs } from './TierEnvService';
+import { signCanonicalString } from '../crypto/licenseCodec';
 
 /**
  * 统一权益计算（唯一出口）
@@ -37,6 +38,8 @@ export interface Entitlements {
   caps: EntitlementCaps;
   entitlementsVersion: string;
   activeKeyId: string | null;
+  issuedAt?: string;
+  entitlementsSig?: string | null;
 }
 
 const keyRepo = () => AppDataSource.getRepository(LicenseKey);
@@ -178,6 +181,37 @@ function tierFromKey(key: LicenseKey | null): EntitlementTier | null {
   };
 }
 
+/** 规范化权益串（C-1 验签内容）：字段顺序固定，禁止用对象展开拼接 */
+function canonicalEntitlements(accountId: string, e: Entitlements, issuedAt: string): string {
+  return JSON.stringify({
+    accountId,
+    entitlementsVersion: e.entitlementsVersion,
+    version: e.version,
+    level: e.level,
+    role: e.role,
+    expireAt: e.expireAt ?? '',
+    permanent: e.permanent,
+    seats: e.seats,
+    caps: {
+      maxEnvs: e.caps.maxEnvs,
+      proxy: e.caps.proxy,
+      importExport: e.caps.importExport,
+      cloudBackup: e.caps.cloudBackup,
+      teamManage: e.caps.teamManage,
+      ipResources: e.caps.ipResources,
+    },
+    issuedAt,
+  });
+}
+
+/** 附加签发时间与签名；私钥不可用时不阻断业务（C-1 阶段 1 仅供客户端落盘） */
+function withEntitlementsSignature(accountId: string, e: Entitlements): Entitlements {
+  const issuedAt = new Date().toISOString();
+  const out: Entitlements = { ...e, issuedAt };
+  out.entitlementsSig = signCanonicalString(canonicalEntitlements(accountId, out, issuedAt));
+  return out;
+}
+
 export async function getEntitlements(account: Account): Promise<Entitlements> {
   const role: 'user' | 'admin' | 'member' = account.enterpriseId
     ? (await memberRepo().findOneBy({ accountId: account.id, enterpriseId: account.enterpriseId }))?.role === 1
@@ -187,7 +221,7 @@ export async function getEntitlements(account: Account): Promise<Entitlements> {
 
   const key = await findEffectiveKey(account);
   if (!key) {
-    return {
+    return withEntitlementsSignature(account.id, {
       version: 'none',
       level: 'none',
       role,
@@ -198,7 +232,7 @@ export async function getEntitlements(account: Account): Promise<Entitlements> {
       caps: { ...NONE_CAPS },
       entitlementsVersion: `none:${role}`,
       activeKeyId: null,
-    };
+    });
   }
 
   let seats = key.seats || 0;
@@ -219,7 +253,7 @@ export async function getEntitlements(account: Account): Promise<Entitlements> {
   const caps = capsFor(version, level, role, maxEnvs);
   const expireAt = permanent ? null : new Date(expireSec * 1000).toISOString();
   const versionKey = `k${key.id}:${version}:${level}:${seats}:${maxEnvs}:${permanent ? 'inf' : expireSec}:${role}`;
-  return {
+  return withEntitlementsSignature(account.id, {
     version: version === 2 ? 'enterprise' : 'personal',
     level: level === 2 ? 'pro' : 'normal',
     role,
@@ -230,5 +264,5 @@ export async function getEntitlements(account: Account): Promise<Entitlements> {
     caps,
     entitlementsVersion: versionKey,
     activeKeyId: key.id,
-  };
+  });
 }

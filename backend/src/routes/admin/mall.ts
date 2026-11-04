@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import Joi from 'joi';
-import { ok, fail, clientIp } from '../../middleware/helpers';
+import { ok, fail, clientIp, superAdminRequired } from '../../middleware/helpers';
 import { ApiError } from '../../middleware/errorHandler';
 import { writeOperationLog } from '../../services/LogService';
 import {
@@ -49,7 +49,7 @@ router.get('/tier-limits', async (_req, res) => {
 });
 
 // PUT /api/admin/tier-limits（保存即刷新在线账号权益）
-router.put('/tier-limits', async (req, res) => {
+router.put('/tier-limits', superAdminRequired, async (req, res) => {
   const limitSchema = Joi.object({
     v1l1: Joi.number().integer().min(0).max(100000).required(),
     v1l2: Joi.number().integer().min(0).max(100000).required(),
@@ -94,7 +94,7 @@ router.get('/upgrade-links', async (_req, res) => {
 });
 
 // PUT /api/admin/upgrade-links（保存即推送）
-router.put('/upgrade-links', async (req, res) => {
+router.put('/upgrade-links', superAdminRequired, async (req, res) => {
   const { error, value } = Joi.object({
     links: Joi.object().pattern(Joi.string(), Joi.string().allow('').max(512)).optional(),
     seatAddonMallUrl: Joi.string().allow('').max(512).optional(),
@@ -131,7 +131,7 @@ router.put('/upgrade-links', async (req, res) => {
 });
 
 // POST /api/admin/push-config（仅重新广播当前客户端配置，不修改链接）
-router.post('/push-config', async (req, res) => {
+router.post('/push-config', superAdminRequired, async (req, res) => {
   const config = await buildClientConfig();
   const delivered = broadcastConfig({ ...config, serverTime: Math.floor(Date.now() / 1000) });
   await writeOperationLog(
@@ -172,7 +172,7 @@ router.get('/upgrade-codes', async (req, res) => {
 });
 
 // POST /api/admin/upgrade-codes
-router.post('/upgrade-codes', async (req, res) => {
+router.post('/upgrade-codes', superAdminRequired, async (req, res) => {
   const { error, value } = upgradeCodeSchema.validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   try {
@@ -201,7 +201,7 @@ router.post('/upgrade-codes', async (req, res) => {
 });
 
 // POST /api/admin/upgrade-codes/:id/void
-router.post('/upgrade-codes/:id/void', async (req, res) => {
+router.post('/upgrade-codes/:id/void', superAdminRequired, async (req, res) => {
   try {
     await voidUpgradeCode(String(req.params.id));
     await writeOperationLog(req.auth!.userId, '作废升级码', '套餐与档位', `id=${req.params.id}`, clientIp(req));
@@ -237,7 +237,7 @@ router.get('/seat-addons', async (req, res) => {
 });
 
 // POST /api/admin/seat-addons
-router.post('/seat-addons', async (req, res) => {
+router.post('/seat-addons', superAdminRequired, async (req, res) => {
   const { error, value } = seatAddonSchema.validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   try {
@@ -264,7 +264,7 @@ router.post('/seat-addons', async (req, res) => {
 });
 
 // POST /api/admin/seat-addons/:id/void
-router.post('/seat-addons/:id/void', async (req, res) => {
+router.post('/seat-addons/:id/void', superAdminRequired, async (req, res) => {
   try {
     await voidSeatAddon(String(req.params.id));
     await writeOperationLog(req.auth!.userId, '作废席位扩容码', '席位扩容码', `id=${req.params.id}`, clientIp(req));

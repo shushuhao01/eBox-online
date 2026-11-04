@@ -33,6 +33,8 @@ export interface ClientConfigView {
   otherBuyUrl: string;
   ipResourceVersion: number;
   configVersion: number;
+  /** 线上故障放行开关（C-5）：为 true 时允许绑定码离线完成首次绑定 */
+  allowOfflineFirstBind: boolean;
   tiers: ClientTierView[];
 }
 
@@ -90,6 +92,12 @@ export async function getClientOtherBuyUrl(): Promise<string> {
   return getConfigValue('client_other_buy_url', '');
 }
 
+/** 线上故障放行开关（C-5）：默认关闭，仅运维临时打开 */
+export async function getAllowOfflineFirstBind(): Promise<boolean> {
+  const raw = await getConfigValue('allow_offline_first_bind', '0');
+  return raw === '1' || raw.toLowerCase() === 'true';
+}
+
 function parsePositive(raw: string, fallback: number): number {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
@@ -97,11 +105,12 @@ function parsePositive(raw: string, fallback: number): number {
 
 /** 客户端配置整包（/api/config/client 与 SSE config 事件同构） */
 export async function buildClientConfig(): Promise<ClientConfigView> {
-  const [links, seatAddonMallUrl, buyUrl, otherBuyUrl, disclaimerRaw, ipVersionRaw, configVersionRaw] = await Promise.all([
+  const [links, seatAddonMallUrl, buyUrl, otherBuyUrl, allowOfflineFirstBind, disclaimerRaw, ipVersionRaw, configVersionRaw] = await Promise.all([
     getUpgradeLinks(),
     getSeatAddonMallUrl(),
     getClientBuyUrl(),
     getClientOtherBuyUrl(),
+    getAllowOfflineFirstBind(),
     getConfigValue('disclaimer_version', '1'),
     getConfigValue('ip_resource_version', '1'),
     getConfigValue('config_version', '1'),
@@ -112,6 +121,7 @@ export async function buildClientConfig(): Promise<ClientConfigView> {
     seatAddonMallUrl,
     buyUrl,
     otherBuyUrl,
+    allowOfflineFirstBind,
     ipResourceVersion: parsePositive(ipVersionRaw, 1),
     configVersion: parsePositive(configVersionRaw, 1),
     tiers: listClientTiers().map((t) => ({ ...t, mallUrl: links[t.code] || '' })),

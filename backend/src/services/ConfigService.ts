@@ -85,6 +85,18 @@ export async function getConfigAll(): Promise<Record<string, string>> {
   return map;
 }
 
+// 敏感配置键：读取脱敏、写入需超管（路由层与本文件共用同一份清单）
+export const SECRET_KEYS = new Set(['smtp_pass', 'sms_access_key_secret', 'notify_dingtalk_secret']);
+
+/** 配置脱敏：密钥类只返回占位符 __SET__，前端已按“视为保持原值”处理 */
+export function maskSecrets(map: Record<string, string>): Record<string, string> {
+  const masked: Record<string, string> = { ...map };
+  for (const key of SECRET_KEYS) {
+    if (masked[key]) masked[key] = '__SET__';
+  }
+  return masked;
+}
+
 export async function setConfigValue(key: string, value: string): Promise<void> {
   await saveConfig(key, value);
   // 兼容旧版管理端：直接写 notice 视为“立即发布纯标题公告”

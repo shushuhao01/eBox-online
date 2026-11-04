@@ -162,6 +162,15 @@ export async function listCampaigns(
   };
 }
 
+/** 富文本清洗（第二层防护，防止绕过前端直接调接口写入脚本） */
+export function sanitizeRichHtml(html: string | null | undefined): string {
+  return String(html || '')
+    .replace(/<\s*(script|style|iframe|object|embed|link|meta|base)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+    .replace(/<\s*(script|style|iframe|object|embed|link|meta|base)\b[^>]*\/?\s*>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|src)\s*=\s*("|')\s*javascript:[^"']*\2/gi, '$1=$2#$2');
+}
+
 export async function createCampaign(body: CampaignPayload): Promise<Record<string, unknown>> {
   const title = String(body.title || '').trim();
   if (!title) throw new ApiError('邮件标题不能为空', 1004);
@@ -169,7 +178,7 @@ export async function createCampaign(body: CampaignPayload): Promise<Record<stri
   const row = campaignRepo().create({
     title,
     subject: (body.subject || '').trim() || null,
-    content: body.content || '',
+    content: sanitizeRichHtml(body.content),
     audienceType: normalizeAudience(body.audience_type),
     targetJson: body.target_json || null,
     sendAt,
@@ -188,7 +197,7 @@ export async function updateCampaign(id: string, body: CampaignPayload): Promise
 
   row.title = title;
   if (body.subject !== undefined) row.subject = (body.subject || '').trim() || null;
-  if (body.content !== undefined) row.content = body.content || '';
+  if (body.content !== undefined) row.content = sanitizeRichHtml(body.content);
   if (body.audience_type !== undefined) row.audienceType = normalizeAudience(body.audience_type);
   if (body.target_json !== undefined) row.targetJson = body.target_json || null;
   if (body.send_at !== undefined) row.sendAt = parseDate(body.send_at);

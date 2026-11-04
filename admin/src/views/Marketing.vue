@@ -226,7 +226,7 @@
           <span>{{ viewRow.subject || viewRow.title }}</span>
         </div>
         <div class="view-label">邮件正文</div>
-        <div v-if="viewRow.content" class="view-content" v-html="viewRow.content"></div>
+        <div v-if="viewRow.content" class="view-content" v-html="renderSafeHtml(viewRow.content)"></div>
         <div v-else class="view-content view-empty">（无正文）</div>
       </template>
       <template #footer>
@@ -255,6 +255,7 @@ import {
 } from '@/api/marketing'
 import TimeCell from '@/components/TimeCell.vue'
 import RichEditor from '@/components/RichEditor.vue'
+import { renderSafeHtml } from '@/utils/safeHtml'
 
 const AUDIENCE_LABELS: Record<string, string> = {
   ALL_USERS: '全部注册用户',

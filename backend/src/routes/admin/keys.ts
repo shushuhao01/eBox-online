@@ -9,7 +9,7 @@ import { KeyBatch } from '../../entities/KeyBatch';
 import { Account } from '../../entities/account/Account';
 import { Enterprise } from '../../entities/account/Enterprise';
 import { UnbindLog } from '../../entities/UnbindLog';
-import { ok, fail, clientIp } from '../../middleware/helpers';
+import { ok, fail, clientIp, superAdminRequired } from '../../middleware/helpers';
 import { ApiError } from '../../middleware/errorHandler';
 import { generateKeys, revokeKey, restoreKey, restoreDeletedKey, convertToSwitchKey, findByCode, countUnbindThisMonth } from '../../services/KeyService';
 import { writeOperationLog } from '../../services/LogService';
@@ -25,7 +25,7 @@ const keyRepo = () => AppDataSource.getRepository(LicenseKey);
 const STATUS_TEXT: Record<number, string> = { 0: '未用', 1: '已用', 2: '作废', 3: '过期', 4: '已换机', 5: '已删除' };
 
 // POST /api/admin/keys/generate  生成激活码（批量）
-router.post('/keys/generate', async (req, res) => {
+router.post('/keys/generate', superAdminRequired, async (req, res) => {
   console.log(`[gen] route enter t=${Date.now()}`);
   try {
     const { error, value } = Joi.object({
@@ -157,7 +157,7 @@ router.get('/keys', async (req, res) => {
 });
 
 // POST /api/admin/keys/:id/revoke  作废
-router.post('/keys/:id/revoke', async (req, res) => {
+router.post('/keys/:id/revoke', superAdminRequired, async (req, res) => {
   try {
     const reason = String(req.body?.reason || '').slice(0, 255);
     const key = await revokeKey(req.params.id, req.auth!.userId, reason);
@@ -171,7 +171,7 @@ router.post('/keys/:id/revoke', async (req, res) => {
 });
 
 // POST /api/admin/keys/:id/restore  恢复
-router.post('/keys/:id/restore', async (req, res) => {
+router.post('/keys/:id/restore', superAdminRequired, async (req, res) => {
   try {
     const key = await restoreKey(req.params.id);
     await writeOperationLog(req.auth!.userId, '恢复激活码', key.code, '撤销作废', clientIp(req));
@@ -184,7 +184,7 @@ router.post('/keys/:id/restore', async (req, res) => {
 });
 
 // POST /api/admin/keys/:id/convert  服务端签发换机码
-router.post('/keys/:id/convert', async (req, res) => {
+router.post('/keys/:id/convert', superAdminRequired, async (req, res) => {
   try {
     const newKey = await convertToSwitchKey(req.params.id, req.auth!.userId);
     const srcKey = newKey.convertFromKeyId ? await keyRepo().findOneBy({ id: newKey.convertFromKeyId }) : null;
@@ -325,7 +325,7 @@ router.get('/keys/export', async (req, res) => {
 });
 
 // POST /api/admin/keys/batch-revoke  批量作废
-router.post('/keys/batch-revoke', async (req, res) => {
+router.post('/keys/batch-revoke', superAdminRequired, async (req, res) => {
   try {
     const { error, value } = Joi.object({
       ids: Joi.array().items(Joi.string().required()).min(1).max(500).required(),
@@ -360,7 +360,7 @@ router.post('/keys/batch-revoke', async (req, res) => {
 });
 
 // POST /api/admin/keys/batch-delete  批量删除（仅已作废的码，软删除 status=5）
-router.post('/keys/batch-delete', async (req, res) => {
+router.post('/keys/batch-delete', superAdminRequired, async (req, res) => {
   try {
     const { error, value } = Joi.object({
       ids: Joi.array().items(Joi.string().required()).min(1).max(500).required(),
@@ -387,7 +387,7 @@ router.post('/keys/batch-delete', async (req, res) => {
 });
 
 // POST /api/admin/keys/batch-restore  回收站批量恢复（已删除 → 作废）
-router.post('/keys/batch-restore', async (req, res) => {
+router.post('/keys/batch-restore', superAdminRequired, async (req, res) => {
   try {
     const { error, value } = Joi.object({
       ids: Joi.array().items(Joi.string().required()).min(1).max(500).required(),
@@ -413,7 +413,7 @@ router.post('/keys/batch-restore', async (req, res) => {
 });
 
 // DELETE /api/admin/keys/:id  删除激活码（仅已作废，软删除 status=5）
-router.delete('/keys/:id', async (req, res) => {
+router.delete('/keys/:id', superAdminRequired, async (req, res) => {
   try {
     const key = await keyRepo().findOneBy({ id: req.params.id });
     if (!key) return fail(res, '激活码不存在', 1002);

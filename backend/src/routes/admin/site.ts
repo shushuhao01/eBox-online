@@ -13,7 +13,7 @@ import { SiteContact } from '../../entities/SiteContact';
 import { SiteMedia } from '../../entities/SiteMedia';
 import { SiteDownloadMirror } from '../../entities/SiteDownloadMirror';
 import { SiteAccessRule } from '../../entities/SiteAccessRule';
-import { ok, fail, clientIp } from '../../middleware/helpers';
+import { ok, fail, clientIp, superAdminRequired } from '../../middleware/helpers';
 import { writeOperationLog } from '../../services/LogService';
 import {
   getSiteSettings,
@@ -650,7 +650,7 @@ router.get('/release', async (_req, res) => {
   ok(res, pickReleaseConfig(await getSiteSettings()));
 });
 
-router.put('/release', async (req, res) => {
+router.put('/release', superAdminRequired, async (req, res) => {
   const { error, value } = Joi.object({
     release_version: Joi.string().allow('', null).max(64).default(''),
     release_date: Joi.string().allow('', null).max(32).default(''),
@@ -693,7 +693,7 @@ router.put('/release', async (req, res) => {
  * 上传安装包：接收原始二进制（Content-Type 不限），文件名通过 query.filename 传入。
  * 仅允许 .exe / .zip，成功后写入 release_* 设置并返回最新配置；旧安装包文件自动清理。
  */
-router.post('/release/upload', express.raw({ type: () => true, limit: RELEASE_UPLOAD_LIMIT }), async (req, res) => {
+router.post('/release/upload', superAdminRequired, express.raw({ type: () => true, limit: RELEASE_UPLOAD_LIMIT }), async (req, res) => {
   try {
     const buf = req.body as Buffer;
     if (!Buffer.isBuffer(buf) || !buf.length) return fail(res, '上传内容为空', 400);
@@ -744,7 +744,7 @@ router.post('/release/upload', express.raw({ type: () => true, limit: RELEASE_UP
 
 // ==================== 版本同步 / 统计 ====================
 
-router.post('/release/sync', async (req, res) => {
+router.post('/release/sync', superAdminRequired, async (req, res) => {
   clearReleaseCache();
   await writeOperationLog(req.auth!.userId, '官网-同步版本信息', 'latest-release', null, clientIp(req));
   ok(res, { synced: true });

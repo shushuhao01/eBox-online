@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import Joi from 'joi';
-import { ok, fail, clientIp } from '../../middleware/helpers';
+import { ok, fail, clientIp, superAdminRequired } from '../../middleware/helpers';
 import { writeOperationLog } from '../../services/LogService';
 import {
   listCampaigns,
@@ -43,7 +43,7 @@ router.get('/campaigns', async (req, res) => {
   ok(res, result);
 });
 
-router.post('/campaigns', async (req, res) => {
+router.post('/campaigns', superAdminRequired, async (req, res) => {
   const { error, value } = campaignSchema.validate(req.body || {});
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   const row = await createCampaign(value);
@@ -51,7 +51,7 @@ router.post('/campaigns', async (req, res) => {
   ok(res, row);
 });
 
-router.put('/campaigns/:id', async (req, res) => {
+router.put('/campaigns/:id', superAdminRequired, async (req, res) => {
   const { error, value } = campaignSchema.validate(req.body || {});
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   const row = await updateCampaign(req.params.id, value);
@@ -59,13 +59,13 @@ router.put('/campaigns/:id', async (req, res) => {
   ok(res, row);
 });
 
-router.delete('/campaigns/:id', async (req, res) => {
+router.delete('/campaigns/:id', superAdminRequired, async (req, res) => {
   await deleteCampaign(req.params.id);
   await writeOperationLog(req.auth!.userId, '删除营销邮件', req.params.id, '', clientIp(req));
   ok(res, { id: req.params.id });
 });
 
-router.post('/campaigns/:id/send', async (req, res) => {
+router.post('/campaigns/:id/send', superAdminRequired, async (req, res) => {
   const result = await sendCampaign(req.params.id);
   await writeOperationLog(req.auth!.userId, '发送营销邮件', req.params.id, JSON.stringify(result), clientIp(req));
   ok(res, result);

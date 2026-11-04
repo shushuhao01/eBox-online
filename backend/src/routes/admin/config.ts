@@ -13,6 +13,8 @@ import {
   scheduleNotice,
   cancelScheduledNotice,
   withdrawNotice,
+  maskSecrets,
+  SECRET_KEYS,
   type NoticeDraft,
 } from '../../services/ConfigService';
 import { writeOperationLog, cleanExpiredData } from '../../services/LogService';
@@ -98,26 +100,36 @@ function pickDraft(body: Record<string, unknown>): NoticeDraft {
 }
 
 router.get('/', async (_req, res) => {
-  const all = await getConfigAll();
+  // 密钥类配置脱敏后再下发，前端显示 __SET__，不暴露明文
+  const all = maskSecrets(await getConfigAll());
   // 发布态/定时任务以结构化对象返回，隐藏内部 JSON 字符串键，避免前端误用
   delete all.notice_payload;
   delete all.notice_pending;
   ok(res, { ...all, ...(await noticeState()), notice_stream_clients: onlineCount() });
 });
 
-// 敏感配置：提交空值或占位符 __SET__ 表示“保持原值”
-const SECRET_KEYS = new Set(['smtp_pass', 'sms_access_key_secret', 'notify_dingtalk_secret']);
-
 router.put('/', async (req, res) => {
   const { error, value } = schema.validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
+  // 密钥类配置只允许超管修改（role === 1）
+  if (req.auth!.role !== 1) {
+    for (const [k, v] of Object.entries(value)) {
+      const text = String(v);
+      if (SECRET_KEYS.has(k) && text !== '' && text !== '__SET__') {
+        return fail(res, '仅超级管理员可修改密钥类配置', 403);
+      }
+    }
+  }
+  const changed: string[] = [];
   for (const [k, v] of Object.entries(value)) {
     const text = String(v);
     if (SECRET_KEYS.has(k) && (text === '' || text === '__SET__')) continue;
     await setConfigValue(k, text);
+    // 操作日志只记录变更键名，密钥类不落明文
+    changed.push(SECRET_KEYS.has(k) ? `${k}=***` : `${k}=${text}`);
   }
-  await writeOperationLog(req.auth!.userId, '修改系统设置', '系统设置', JSON.stringify(value), clientIp(req));
-  const all = await getConfigAll();
+  await writeOperationLog(req.auth!.userId, '修改系统设置', '系统设置', changed.join('\n'), clientIp(req));
+  const all = maskSecrets(await getConfigAll());
   delete all.notice_payload;
   delete all.notice_pending;
   ok(res, { ...all, ...(await noticeState()) });

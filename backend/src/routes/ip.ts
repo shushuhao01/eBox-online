@@ -223,10 +223,13 @@ router.post('/ip/resources/:id/probe-result', async (req, res) => {
 // POST /api/ip/resources/:id/status（启用 / 停用）
 router.post('/ip/resources/:id/status', async (req, res) => {
   try {
-    const schema = Joi.object({ status: Joi.number().integer().valid(1, 2).required() });
+    const schema = Joi.object({
+      status: Joi.number().integer().valid(1, 2).required(),
+      reason: Joi.string().allow('').max(200).default(''),
+    });
     const { error, value } = schema.validate(req.body);
     if (error) throw new ApiError(`参数错误：${error.message}`, 400, 400);
-    await setResourceStatus(req.accountAuth!.account, String(req.params.id), value.status);
+    await setResourceStatus(req.accountAuth!.account, String(req.params.id), value.status, value.reason);
     ok(res, null, value.status === 1 ? '资源已启用' : '资源已停用');
   } catch (e) {
     if (sendError(res, e)) return;

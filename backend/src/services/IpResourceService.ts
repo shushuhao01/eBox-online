@@ -11,6 +11,7 @@ import { IpPoolSetting } from '../entities/account/IpPoolSetting';
 import { IpResource } from '../entities/account/IpResource';
 import { ApiError } from '../middleware/errorHandler';
 import { decryptSecret, encryptSecret } from '../utils/accountCrypto';
+import { pushAccountNotice } from './AccountEventService';
 import { getEntitlements } from './EntitlementService';
 import { EnterpriseContext, requireEnterpriseAdmin } from './EnterpriseService';
 import { writeOperationLog } from './LogService';
@@ -768,15 +769,60 @@ export async function deleteResource(account: Account, resourceId: string): Prom
   await writeOperationLog(account.id, 'ip.resource.delete', `${r.host}:${r.port}`, '删除 IP 资源', '');
 }
 
-/** 停用 / 启用 */
-export async function setResourceStatus(account: Account, resourceId: string, status: number): Promise<void> {
+/** 停用 / 启用；停用已分配给成员的资源必须填写原因，并即时通知该成员 */
+export async function setResourceStatus(
+  account: Account,
+  resourceId: string,
+  status: number,
+  reason = ''
+): Promise<void> {
   if (status !== 1 && status !== 2) throw new ApiError('状态参数错误', 400);
   const ctx = await resolvePoolForManage(account);
   const r = await getManageableResource(account, ctx, resourceId);
+  const assignment = await assignmentRepo().findOneBy({ resourceId: r.id });
+  const notifyMemberId =
+    status === 2 && assignment && (assignment.status === 1 || assignment.status === 2) &&
+    String(assignment.memberAccountId) !== String(account.id)
+      ? String(assignment.memberAccountId)
+      : '';
+  if (status === 2 && notifyMemberId && !reason.trim()) {
+    throw new ApiError('停用已分配给成员的 IP 必须填写原因', 400, 400);
+  }
   // 使用中的资源允许停用（客户端会二次确认并提示首页对应环境将不可用）
   r.status = status;
   await resourceRepo().save(r);
-  await writeOperationLog(account.id, 'ip.resource.status', `${r.host}:${r.port}`, status === 1 ? '启用资源' : '停用资源', '');
+  const detail = reason.trim() ? `${status === 1 ? '启用资源' : '停用资源'}（原因：${reason.trim()}）` : status === 1 ? '启用资源' : '停用资源';
+  await writeOperationLog(account.id, 'ip.resource.status', `${r.host}:${r.port}`, detail, '');
+  if (notifyMemberId) {
+    const title = 'IP 资源已停用';
+    const content = `管理员停用了 IP ${r.host}:${r.port}${reason.trim() ? `，原因：${reason.trim()}` : ''}。如该 IP 已绑定到你的环境，请更换可用 IP 后重新启动。`;
+    pushAccountNotice(notifyMemberId, {
+      notice: title,
+      noticeData: { title, content, strong: false, link: '' },
+    });
+  }
+}
+
+/** 管理员逐条设置某条已分配资源是否向成员开放明文凭据（默认关闭） */
+export async function setAssignmentPlaintext(
+  admin: Account,
+  memberId: string,
+  resourceId: string,
+  visible: boolean,
+  ip?: string
+): Promise<{ plaintextVisible: boolean }> {
+  const ctx = await requireEnterpriseAdmin(admin);
+  const member = await memberRepo().findOneBy({ id: memberId, enterpriseId: ctx.enterprise.id });
+  if (!member || member.status !== 1) throw new ApiError('成员不存在或已停用', 4004, 404);
+  const a = await assignmentRepo().findOneBy({ resourceId, memberAccountId: member.accountId });
+  if (!a || (a.status !== 1 && a.status !== 2)) throw new ApiError('该资源未分配给该成员', 4004, 404);
+  a.plaintextVisible = visible ? 1 : 0;
+  await assignmentRepo().save(a);
+  const r = await resourceRepo().findOneBy({ id: resourceId });
+  const address = r ? `${r.host}:${r.port}` : resourceId;
+  await writeOperationLog(admin.id, 'ip.assign.plaintext', `member:${member.accountId}`,
+    `${visible ? '开放' : '关闭'}明文凭据（${address}）`, ip || '');
+  return { plaintextVisible: visible };
 }
 
 /** 读取资源并校验当前账号的访问权限（下发凭据 / 回传测试结果共用） */

@@ -201,6 +201,13 @@ function signPayload(payload: Buffer): Buffer | null {
   }
 }
 
+// 权益快照签名（C-1）：对规范化 JSON 文本签名，输出 base64。
+// 与激活码签名同款算法（ECDSA P-256 / SHA-256 / ieee-p1363），客户端 BCryptVerifySignature 可直接校验。
+export function signCanonicalString(text: string): string | null {
+  const sig = signPayload(Buffer.from(text, 'utf8'));
+  return sig ? sig.toString('base64') : null;
+}
+
 // 生成激活码。
 //   durationFormat=true：
 //     onlineManaged=true（默认，面板库存码）：field=有效时长秒（0=永久），格式 verMinor=9（在线托管）

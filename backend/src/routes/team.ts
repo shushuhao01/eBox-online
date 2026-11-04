@@ -12,7 +12,7 @@ import {
   deleteTeamMember,
   getEnterpriseInfo,
 } from '../services/EnterpriseService';
-import { assignResources, listEnterprisePool, recycleResource } from '../services/IpResourceService';
+import { assignResources, listEnterprisePool, recycleResource, setAssignmentPlaintext } from '../services/IpResourceService';
 import { getTeamSummary, getTeamTrend } from '../services/TeamDashboardService';
 import { listEnterpriseSeatAddons, redeemSeatAddon } from '../services/VoucherService';
 import { pushKick } from '../services/AccountEventService';
@@ -244,6 +244,26 @@ router.delete('/team/members/:id/ips/:resourceId', async (req, res) => {
       clientIp(req)
     );
     ok(res, null, '资源已回收');
+  } catch (e) {
+    if (sendError(res, e)) return;
+    throw e;
+  }
+});
+
+// POST /api/team/members/:id/ips/:resourceId/plaintext（逐条设置明文凭据可见性）
+router.post('/team/members/:id/ips/:resourceId/plaintext', async (req, res) => {
+  try {
+    const schema = Joi.object({ visible: Joi.boolean().required() });
+    const { error, value } = schema.validate(req.body);
+    if (error) throw new ApiError(`参数错误：${error.message}`, 400, 400);
+    const result = await setAssignmentPlaintext(
+      req.accountAuth!.account,
+      String(req.params.id),
+      String(req.params.resourceId),
+      value.visible,
+      clientIp(req)
+    );
+    ok(res, result, value.visible ? '已开放明文凭据' : '已关闭明文凭据');
   } catch (e) {
     if (sendError(res, e)) return;
     throw e;

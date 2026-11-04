@@ -3,7 +3,7 @@ import Joi from 'joi';
 import { AppDataSource } from '../../config/database';
 import { NotificationTemplate } from '../../entities/account/NotificationTemplate';
 import { SystemMessage } from '../../entities/account/SystemMessage';
-import { ok, fail, clientIp } from '../../middleware/helpers';
+import { ok, fail, clientIp, superAdminRequired } from '../../middleware/helpers';
 import { writeOperationLog } from '../../services/LogService';
 import { getConfigAll, getConfigValue, setConfigValue } from '../../services/ConfigService';
 import { loadSmtpConfig, getMailFromName } from '../../services/SmtpConfigService';
@@ -104,7 +104,7 @@ const configSchema = Joi.object({
   notify_global_enabled: Joi.string().valid('0', '1').optional(),
 });
 
-router.put('/config', async (req, res) => {
+router.put('/config', superAdminRequired, async (req, res) => {
   const { error, value } = configSchema.validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   for (const [k, v] of Object.entries(value)) {
@@ -119,7 +119,7 @@ router.put('/config', async (req, res) => {
 
 // ==================== 连通性测试 ====================
 
-router.post('/mail/test', async (req, res) => {
+router.post('/mail/test', superAdminRequired, async (req, res) => {
   const { error, value } = Joi.object({
     to: Joi.string().trim().email().required(),
   }).validate(req.body || {});
@@ -139,7 +139,7 @@ router.post('/mail/test', async (req, res) => {
   ok(res, { ok: true });
 });
 
-router.post('/sms/test', async (req, res) => {
+router.post('/sms/test', superAdminRequired, async (req, res) => {
   const { error, value } = Joi.object({
     phone: Joi.string().trim().required(),
     template_code: Joi.string().trim().allow('').max(64).optional(),
@@ -171,7 +171,7 @@ router.post('/sms/test', async (req, res) => {
   }
 });
 
-router.post('/sms/test-connection', async (_req, res) => {
+router.post('/sms/test-connection', superAdminRequired, async (_req, res) => {
   const config = await loadAliyunSmsConfig();
   if (!config) return fail(res, '未配置阿里云 AccessKey', 1001);
   try {
@@ -232,7 +232,7 @@ router.get('/templates', async (req, res) => {
   ok(res, { total, page, pageSize, list });
 });
 
-router.post('/templates', async (req, res) => {
+router.post('/templates', superAdminRequired, async (req, res) => {
   const { error, value } = templateSchema.validate(req.body || {});
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   const v = value as Record<string, unknown>;
@@ -259,7 +259,7 @@ router.post('/templates', async (req, res) => {
   ok(res, row);
 });
 
-router.put('/templates/:id', async (req, res) => {
+router.put('/templates/:id', superAdminRequired, async (req, res) => {
   const row = await templateRepo().findOneBy({ id: req.params.id });
   if (!row) return fail(res, '模板不存在', 1002);
   const { error, value } = templateSchema
@@ -285,7 +285,7 @@ router.put('/templates/:id', async (req, res) => {
   ok(res, saved);
 });
 
-router.delete('/templates/:id', async (req, res) => {
+router.delete('/templates/:id', superAdminRequired, async (req, res) => {
   const row = await templateRepo().findOneBy({ id: req.params.id });
   if (!row) return fail(res, '模板不存在', 1002);
   await templateRepo().delete({ id: row.id });
@@ -293,7 +293,7 @@ router.delete('/templates/:id', async (req, res) => {
   ok(res, { id: row.id });
 });
 
-router.post('/test', async (req, res) => {
+router.post('/test', superAdminRequired, async (req, res) => {
   const { error, value } = Joi.object({
     template_code: Joi.string().trim().required(),
   }).validate(req.body || {});

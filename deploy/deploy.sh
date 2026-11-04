@@ -89,10 +89,17 @@ echo "==> [3/5] 环境配置 (.env)"
 cd "$APP_DIR/backend"
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "    已从 .env.example 生成 .env"
+  # 首次生成时自动写入强随机 JWT_SECRET（已存在 .env 不动，避免覆盖线上配置）
+  JWT_RANDOM="$(openssl rand -hex 32 2>/dev/null || true)"
+  if [ -z "$JWT_RANDOM" ]; then
+    JWT_RANDOM="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  fi
+  if [ -n "$JWT_RANDOM" ]; then
+    sed -i "s#^JWT_SECRET=.*#JWT_SECRET=${JWT_RANDOM}#" .env
+  fi
+  echo "    已从 .env.example 生成 .env（JWT_SECRET 已自动生成）"
   echo "    【重要】请立即编辑 .env："
   echo "      - DB_PASSWORD：MySQL 密码"
-  echo "      - JWT_SECRET：随机长字符串"
   echo "      - LICENSE_PRIVATE_KEY_D：保留默认出厂密钥即可（与客户端公钥配套）"
 else
   echo "    .env 已存在，跳过生成"

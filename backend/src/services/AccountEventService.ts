@@ -105,6 +105,23 @@ export function broadcastAccountNotice(event: NoticeEvent): number {
 // 注册到公告广播器：后台保存/撤下公告时同时送达账号通道
 setAccountNoticeSink(broadcastAccountNotice);
 
+/** 向指定账号推送一条通知（复用公告通道），返回实际写入成功的连接数。 */
+export function pushAccountNotice(accountId: string, event: NoticeEvent): number {
+  const set = clients.get(accountId);
+  if (!set || set.size === 0) return 0;
+  let sent = 0;
+  for (const res of set) {
+    try {
+      writeNotice(res, event);
+      sent++;
+    } catch {
+      set.delete(res);
+    }
+  }
+  if (set.size === 0) clients.delete(accountId);
+  return sent;
+}
+
 /** 连接断开：注销。 */
 export function removeAccountClient(accountId: string, res: Response): void {
   const set = clients.get(accountId);
