@@ -1,5 +1,6 @@
 import zlib from 'zlib';
 import { TextDecoder } from 'util';
+import { SelectQueryBuilder } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Account } from '../entities/account/Account';
 import { AccountDevice } from '../entities/account/AccountDevice';
@@ -608,6 +609,7 @@ export async function listResources(
   pageSize: number;
   storageMode: number;
   list: IpResourceView[];
+  stats: { total: number; assigned: number; inUse: number };
 }> {
   const ctx = await resolvePoolForRead(account);
   const page = Math.max(1, Number(opts.page) || 1);
@@ -622,10 +624,28 @@ export async function listResources(
     qb.andWhere('r.status = :status', { status: opts.status });
   }
   const total = await qb.getCount();
+  // 汇总卡片统计整个资源池（与分页 / 筛选无关），避免只反映当前页
+  const stats = await poolStats(qb);
   const rows = await qb.orderBy('r.id', 'DESC').skip((page - 1) * pageSize).take(pageSize).getMany();
   const views = await decorateResources(rows, ctx, account);
   const list = opts.bound === undefined ? views : views.filter((v) => (opts.bound === 1 ? v.assigned : !v.assigned));
-  return { total, page, pageSize, storageMode: ctx.storageMode, list };
+  return { total, page, pageSize, storageMode: ctx.storageMode, list, stats };
+}
+
+/** 资源池汇总：全量总数 / 已分配（含使用中） / 使用中，不受 keyword、status、分页影响 */
+async function poolStats(base: SelectQueryBuilder<IpResource>): Promise<{ total: number; assigned: number; inUse: number }> {
+  const row = await base
+    .clone()
+    .leftJoin(IpAssignment, 'sa', 'sa.resource_id = r.id AND sa.status IN (1,2)')
+    .select('COUNT(r.id)', 'total')
+    .addSelect('COALESCE(SUM(CASE WHEN sa.id IS NOT NULL THEN 1 ELSE 0 END), 0)', 'assigned')
+    .addSelect('COALESCE(SUM(CASE WHEN sa.status = 2 THEN 1 ELSE 0 END), 0)', 'inUse')
+    .getRawOne<{ total: string; assigned: string; inUse: string }>();
+  return {
+    total: Number(row?.total || 0),
+    assigned: Number(row?.assigned || 0),
+    inUse: Number(row?.inUse || 0),
+  };
 }
 
 /** 批量补充分配信息与掩码 */
@@ -957,7 +977,15 @@ export async function listEnterprisePool(
   account: Account,
   ctx: EnterpriseContext,
   opts: TeamPoolQuery
-): Promise<{ total: number; page: number; pageSize: number; seats: number; usedSeats: number; list: IpResourceView[] }> {
+): Promise<{
+  total: number;
+  page: number;
+  pageSize: number;
+  seats: number;
+  usedSeats: number;
+  list: IpResourceView[];
+  stats: { total: number; assigned: number; inUse: number };
+}> {
   const page = Math.max(1, Number(opts.page) || 1);
   const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 20));
   const keyword = String(opts.keyword || '').trim();
@@ -973,6 +1001,7 @@ export async function listEnterprisePool(
   const qb = resourceRepo().createQueryBuilder('r').where('r.scope = 2 AND r.enterprise_id = :entId', {
     entId: ctx.enterprise.id,
   });
+  const stats = await poolStats(qb);
   if (keyword) qb.andWhere('(r.host LIKE :kw OR r.username LIKE :kw OR r.remark LIKE :kw)', { kw: `%${keyword}%` });
   if (opts.status === 1 || opts.status === 2) qb.andWhere('r.status = :status', { status: opts.status });
   if (opts.memberId) {
@@ -984,7 +1013,7 @@ export async function listEnterprisePool(
   const rows = await qb.orderBy('r.id', 'DESC').skip((page - 1) * pageSize).take(pageSize).getMany();
   const list = await decorateResources(rows, poolCtx, account);
   const usedSeats = await memberRepo().count({ where: { enterpriseId: ctx.enterprise.id, status: 1 } });
-  return { total, page, pageSize, seats: ctx.enterprise.seats, usedSeats, list };
+  return { total, page, pageSize, seats: ctx.enterprise.seats, usedSeats, list, stats };
 }
 
 /** 分配（管理员 → 成员）；支持批量与「允许查看明文」 */
