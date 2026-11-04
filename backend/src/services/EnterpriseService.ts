@@ -135,6 +135,8 @@ export interface TeamMemberItem {
   createdAt: Date;
   lastActiveAt: Date | null;
   online: boolean;
+  /** 已分配 IP 数量（仅统计生效/已停用，不含已回收） */
+  assignedIps: number;
 }
 
 export interface TeamMemberList {
@@ -144,6 +146,8 @@ export interface TeamMemberList {
   seats: number;
   usedSeats: number;
   onlineCount: number;
+  /** 已停用成员数（企业全量，不随筛选变化） */
+  disabledCount: number;
   list: TeamMemberItem[];
 }
 
@@ -192,6 +196,17 @@ export async function listTeamMembers(
     : [];
   const lastActiveMap = new Map(lastActiveRows.map((r) => [String(r.account_id), r.last_active_at]));
 
+  // 每个成员的已分配 IP 数量（生效/已停用，不含已回收），用于用户管理「分配IP」列
+  const ipCountRows: Array<{ member_account_id: string; c: number | string }> = rows.length
+    ? await AppDataSource.query(
+        `SELECT member_account_id, COUNT(*) AS c FROM ip_assignments
+         WHERE member_account_id IN (${rows.map(() => '?').join(',')}) AND status IN (1, 2)
+         GROUP BY member_account_id`,
+        rows.map((r) => r.accountId)
+      )
+    : [];
+  const ipCountMap = new Map(ipCountRows.map((r) => [String(r.member_account_id), Number(r.c) || 0]));
+
   const now = Date.now();
   const list: TeamMemberItem[] = rows.map((m) => {
     const a = accountMap.get(String(m.accountId));
@@ -210,6 +225,7 @@ export async function listTeamMembers(
       createdAt: m.createdAt,
       lastActiveAt: lastActiveAt ? new Date(lastActiveAt) : null,
       online: !!ts && now - ts <= ONLINE_WINDOW_MS,
+      assignedIps: ipCountMap.get(String(m.accountId)) || 0,
     };
   });
 
@@ -223,7 +239,18 @@ export async function listTeamMembers(
     [enterprise.id, new Date(now - ONLINE_WINDOW_MS)]
   );
   const onlineCount = Number(onlineRows[0]?.c || 0);
-  return { total, page, pageSize, seats: enterprise.seats, usedSeats, onlineCount, list };
+  // 已停用成员数（企业全量）
+  const disabledCount = await memberRepo().countBy({ enterpriseId: enterprise.id, status: 2 });
+  return {
+    total,
+    page,
+    pageSize,
+    seats: enterprise.seats,
+    usedSeats,
+    onlineCount,
+    disabledCount,
+    list,
+  };
 }
 
 export interface CreateMemberResult {

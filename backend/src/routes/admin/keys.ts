@@ -124,7 +124,36 @@ router.get('/keys', async (req, res) => {
     .take(pageSize)
     .getMany();
 
-  ok(res, { total, page, pageSize, list: rows });
+  // 列表补充绑定账户登录名 / 所属企业名称，避免前端只显示 账号#id
+  const accountIds = Array.from(new Set(rows.map((r) => String(r.accountId || '')).filter((v) => v && v !== '0')));
+  const enterpriseIds = Array.from(
+    new Set(rows.map((r) => String(r.enterpriseId || '')).filter((v) => v && v !== '0'))
+  );
+  const accounts = accountIds.length
+    ? await AppDataSource.getRepository(Account)
+        .createQueryBuilder('a')
+        .where('a.id IN (:...ids)', { ids: accountIds })
+        .getMany()
+    : [];
+  const enterprises = enterpriseIds.length
+    ? await AppDataSource.getRepository(Enterprise)
+        .createQueryBuilder('e')
+        .where('e.id IN (:...ids)', { ids: enterpriseIds })
+        .getMany()
+    : [];
+  const accountMap = new Map(accounts.map((a) => [String(a.id), a.login]));
+  const enterpriseMap = new Map(enterprises.map((e) => [String(e.id), e.name]));
+
+  ok(res, {
+    total,
+    page,
+    pageSize,
+    list: rows.map((k) => ({
+      ...k,
+      accountLogin: accountMap.get(String(k.accountId || '')) || '',
+      enterpriseName: enterpriseMap.get(String(k.enterpriseId || '')) || '',
+    })),
+  });
 });
 
 // POST /api/admin/keys/:id/revoke  作废

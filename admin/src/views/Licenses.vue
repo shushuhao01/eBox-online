@@ -113,11 +113,11 @@
         <el-table-column label="客户ID" width="90" align="center">
           <template #default="{ row }">{{ row.customerId || '-' }}</template>
         </el-table-column>
-        <el-table-column label="绑定账号" width="100" align="center">
-          <template #default="{ row }">{{ row.accountId ? `账号#${row.accountId}` : '-' }}</template>
+        <el-table-column label="绑定账号" width="140" align="center">
+          <template #default="{ row }">{{ row.accountLogin || '-' }}</template>
         </el-table-column>
-        <el-table-column label="所属企业" width="100" align="center">
-          <template #default="{ row }">{{ row.enterpriseId ? `企业#${row.enterpriseId}` : '-' }}</template>
+        <el-table-column label="所属企业" width="160" align="center">
+          <template #default="{ row }">{{ row.enterpriseName || '-' }}</template>
         </el-table-column>
         <el-table-column label="首次激活" width="110">
           <template #default="{ row }"><TimeCell :value="row.usedAt" /></template>

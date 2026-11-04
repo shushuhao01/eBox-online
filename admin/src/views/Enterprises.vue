@@ -172,8 +172,8 @@
               </el-table-column>
               <el-table-column label="角色" width="100" align="center">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="row.role === 2 ? 'warning' : 'info'" effect="plain">
-                    {{ row.role === 2 ? '企业管理员' : '企业成员' }}
+                  <el-tag size="small" :type="row.role === 1 ? 'warning' : 'info'" effect="plain">
+                    {{ row.role === 1 ? '企业管理员' : '企业成员' }}
                   </el-tag>
                 </template>
               </el-table-column>
