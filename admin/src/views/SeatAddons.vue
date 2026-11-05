@@ -60,8 +60,8 @@
             <el-table-column label="核销时间" width="160">
               <template #default="{ row }"><TimeCell :value="row.usedAt" /></template>
             </el-table-column>
-            <el-table-column label="核销账号" width="110" align="center">
-              <template #default="{ row }">{{ row.usedBy || row.accountId || '-' }}</template>
+            <el-table-column label="核销账号" width="190" align="center" show-overflow-tooltip>
+              <template #default="{ row }">{{ usedByText(row) }}</template>
             </el-table-column>
             <el-table-column label="备注" min-width="140" show-overflow-tooltip>
               <template #default="{ row }">{{ row.remark || '-' }}</template>
@@ -206,8 +206,8 @@
             <el-table-column label="核销时间" width="160">
               <template #default="{ row }"><TimeCell :value="row.usedAt" /></template>
             </el-table-column>
-            <el-table-column label="核销账号" width="110" align="center">
-              <template #default="{ row }">{{ row.usedBy || '-' }}</template>
+            <el-table-column label="核销账号" width="190" align="center" show-overflow-tooltip>
+              <template #default="{ row }">{{ usedByText(row) }}</template>
             </el-table-column>
             <el-table-column label="备注" min-width="140" prop="remark" show-overflow-tooltip>
               <template #default="{ row }">{{ row.remark || '-' }}</template>
@@ -387,6 +387,18 @@ const STATUS: Record<number, { label: string; type: 'info' | 'success' | 'danger
 }
 
 const DURATION_TEXT: Record<string, string> = { month: '月卡', quarter: '季卡', year: '年卡', permanent: '永久' }
+
+/** 核销账号展示：登录名（昵称）；历史记录只存账号 ID 时回退显示 ID */
+function usedByText(row: {
+  usedBy?: string | null
+  usedByLogin?: string | null
+  usedByNickname?: string | null
+  accountId?: string | null
+}) {
+  const login = row.usedByLogin || row.usedBy || row.accountId || ''
+  if (!login) return '-'
+  return row.usedByNickname ? `${login}（${row.usedByNickname}）` : login
+}
 
 // ==================== 客户端下发（商城链接） ====================
 /** 升级链接按 4 个档位时长下发；同档位的个人/企业、普通/高级 SKU 共用该链接 */

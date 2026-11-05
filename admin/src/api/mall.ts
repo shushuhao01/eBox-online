@@ -55,6 +55,8 @@ export interface UpgradeCodeRow {
   validUntil: string | null
   usedAt: string | null
   usedBy: string | null
+  usedByLogin: string | null
+  usedByNickname: string | null
   createdAt: string
 }
 
@@ -68,6 +70,8 @@ export interface SeatAddonRow {
   validUntil: string | null
   usedAt: string | null
   usedBy: string | null
+  usedByLogin: string | null
+  usedByNickname: string | null
   createdAt: string
 }
 

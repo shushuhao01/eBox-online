@@ -25,6 +25,27 @@ import { isEnterpriseMember } from './LicenseAccountService';
 const upgradeRepo = () => AppDataSource.getRepository(UpgradeCode);
 const seatRepo = () => AppDataSource.getRepository(SeatAddon);
 
+/** 核销记录只保存账号 ID：列表展示时批量补齐「登录名 + 昵称」 */
+interface UsedByAccount {
+  login: string;
+  nickname: string | null;
+}
+
+async function resolveUsedByAccounts(ids: Array<string | null>): Promise<Map<string, UsedByAccount>> {
+  const unique = Array.from(new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0)));
+  const map = new Map<string, UsedByAccount>();
+  if (unique.length === 0) return map;
+  const accounts = await AppDataSource.getRepository(Account)
+    .createQueryBuilder('a')
+    .select(['a.id', 'a.login', 'a.nickname'])
+    .where('a.id IN (:...ids)', { ids: unique })
+    .getMany();
+  for (const a of accounts) {
+    map.set(String(a.id), { login: a.login, nickname: a.nickname });
+  }
+  return map;
+}
+
 /** 升级码只按「时长档位」生成：同档位普通版 → 高级版，到期时间不变 */
 const UPGRADE_DURATIONS = ['month', 'quarter', 'year', 'permanent'] as const;
 type UpgradeDuration = (typeof UPGRADE_DURATIONS)[number];
@@ -106,6 +127,8 @@ export interface UpgradeCodeRow {
   validUntil: string | null;
   usedAt: string | null;
   usedBy: string | null;
+  usedByLogin: string | null;
+  usedByNickname: string | null;
   createdAt: string;
 }
 
@@ -146,6 +169,8 @@ export async function createUpgradeCodes(input: CreateUpgradeCodesInput): Promis
     validUntil: r.validUntil ? r.validUntil.toISOString() : null,
     usedAt: null,
     usedBy: null,
+    usedByLogin: null,
+    usedByNickname: null,
     createdAt: r.createdAt.toISOString(),
   }));
 }
@@ -164,12 +189,14 @@ export async function listUpgradeCodes(filter: {
   if (keyword) qb.andWhere('(c.code LIKE :kw OR c.remark LIKE :kw)', { kw: `%${keyword}%` });
   const total = await qb.getCount();
   const rows = await qb.orderBy('c.id', 'DESC').offset((page - 1) * pageSize).limit(pageSize).getMany();
+  const usedByMap = await resolveUsedByAccounts(rows.map((r) => r.usedBy));
   return {
     total,
     page,
     pageSize,
     list: rows.map((r) => {
       const toDuration = isUpgradeDuration(r.duration) ? r.duration : null;
+      const usedByAccount = r.usedBy ? usedByMap.get(r.usedBy) : undefined;
       return {
         id: String(r.id),
         code: r.code,
@@ -183,6 +210,8 @@ export async function listUpgradeCodes(filter: {
         validUntil: r.validUntil ? r.validUntil.toISOString() : null,
         usedAt: r.usedAt ? r.usedAt.toISOString() : null,
         usedBy: r.usedBy,
+        usedByLogin: usedByAccount?.login ?? null,
+        usedByNickname: usedByAccount?.nickname ?? null,
         createdAt: r.createdAt.toISOString(),
       };
     }),
@@ -323,10 +352,13 @@ export interface SeatAddonRow {
   validUntil: string | null;
   usedAt: string | null;
   usedBy: string | null;
+  usedByLogin: string | null;
+  usedByNickname: string | null;
   createdAt: string;
 }
 
-function toSeatRow(r: SeatAddon): SeatAddonRow {
+function toSeatRow(r: SeatAddon, usedByMap?: Map<string, UsedByAccount>): SeatAddonRow {
+  const usedByAccount = r.usedBy && usedByMap ? usedByMap.get(r.usedBy) : undefined;
   return {
     id: String(r.id),
     code: r.code,
@@ -337,6 +369,8 @@ function toSeatRow(r: SeatAddon): SeatAddonRow {
     validUntil: r.validUntil ? r.validUntil.toISOString() : null,
     usedAt: r.usedAt ? r.usedAt.toISOString() : null,
     usedBy: r.usedBy,
+    usedByLogin: usedByAccount?.login ?? null,
+    usedByNickname: usedByAccount?.nickname ?? null,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -362,7 +396,7 @@ export async function createSeatAddons(input: CreateSeatAddonsInput): Promise<Se
     );
   }
   const saved = await seatRepo().save(rows);
-  return saved.map(toSeatRow);
+  return saved.map((r) => toSeatRow(r));
 }
 
 export async function listSeatAddons(filter: {
@@ -379,7 +413,8 @@ export async function listSeatAddons(filter: {
   if (keyword) qb.andWhere('(s.code LIKE :kw OR s.remark LIKE :kw)', { kw: `%${keyword}%` });
   const total = await qb.getCount();
   const rows = await qb.orderBy('s.id', 'DESC').offset((page - 1) * pageSize).limit(pageSize).getMany();
-  return { total, page, pageSize, list: rows.map(toSeatRow) };
+  const usedByMap = await resolveUsedByAccounts(rows.map((r) => r.usedBy));
+  return { total, page, pageSize, list: rows.map((r) => toSeatRow(r, usedByMap)) };
 }
 
 export async function voidSeatAddon(id: string): Promise<void> {
@@ -395,7 +430,8 @@ export async function voidSeatAddon(id: string): Promise<void> {
 /** 企业管理员查看本企业已核销的扩容记录 */
 export async function listEnterpriseSeatAddons(enterpriseId: string): Promise<SeatAddonRow[]> {
   const rows = await seatRepo().find({ where: { enterpriseId, status: 2 }, order: { usedAt: 'DESC' }, take: 50 });
-  return rows.map(toSeatRow);
+  const usedByMap = await resolveUsedByAccounts(rows.map((r) => r.usedBy));
+  return rows.map((r) => toSeatRow(r, usedByMap));
 }
 
 export interface RedeemSeatAddonResult {
