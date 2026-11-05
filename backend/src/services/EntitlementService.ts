@@ -55,21 +55,33 @@ const NONE_CAPS: EntitlementCaps = {
   ipResources: false,
 };
 
+/** 绝对到期超过该值即视为永久（3000-01-01）；换机码会写入 MAX_SAFE_INTEGER */
+const PERMANENT_EXPIRE_SEC = 32_503_680_000;
+
 /** 卡密真实到期（Unix 秒；0=永久） */
 export function keyExpireSeconds(key: LicenseKey): number {
+  // 永久卡不参与顺延：即使存量数据被写过 account_expire_at 也以永久为准
+  if (keyIsPermanent(key)) return 0;
   // 账号体系续费顺延后的权威到期时间（可空，兼容存量卡密）
   const override = (key as LicenseKey & { accountExpireAt?: Date | null }).accountExpireAt;
   if (override) return Math.floor(override.getTime() / 1000);
   if (key.type === 2) return Number(key.expireAt || 0);
-  if (key.durationSec === '0') return 0;
   const base = key.usedAt ? Math.floor(key.usedAt.getTime() / 1000) : Math.floor(Date.now() / 1000);
   return base + Number(key.durationSec || 0);
 }
 
-/** 0 表示永久 */
+/**
+ * 是否永久卡（0 表示永久）
+ * 换机码（type=2）签发时会写 expire_at=MAX_SAFE_INTEGER、duration_sec='0'，
+ * 但 duration_days 继承原卡：永久卡换出的换机码为 0，时长卡换出的 >0。
+ * 旧逻辑只认 type=1，导致「永久卡换机码」被当成 0 天时长卡，激活即过期。
+ */
 export function keyIsPermanent(key: LicenseKey): boolean {
-  if (key.type === 2) return false;
-  return key.durationSec === '0';
+  if (Number(key.durationDays || 0) > 0) return false;
+  if (key.durationSec !== '0') return false;
+  if (key.type !== 2) return true;
+  const exp = Number(key.expireAt || 0);
+  return exp === 0 || exp >= PERMANENT_EXPIRE_SEC;
 }
 
 function isKeyExpired(key: LicenseKey, nowSec: number): boolean {

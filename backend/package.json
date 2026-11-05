@@ -13,6 +13,8 @@
     "gen:key": "ts-node src/scripts/gen-key.ts",
     "init:admin": "ts-node src/scripts/init-admin.ts",
     "seed:articles": "ts-node src/scripts/seed-articles.ts",
+    "verify:permanent": "ts-node src/scripts/verify-permanent-keys.ts",
+    "fix:permanent-keys": "ts-node src/scripts/fix-permanent-swap-keys.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

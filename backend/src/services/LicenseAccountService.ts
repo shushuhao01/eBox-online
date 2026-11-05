@@ -64,7 +64,9 @@ export function keyDurationDays(key: LicenseKey): number {
 function keyExpireIso(key: LicenseKey): string | null {
   if (keyIsPermanent(key)) return null;
   const sec = keyExpireSeconds(key);
-  return sec > 0 ? new Date(sec * 1000).toISOString() : null;
+  if (!Number.isFinite(sec) || sec <= 0) return null;
+  const d = new Date(sec * 1000);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 export function toKeySummary(key: LicenseKey, currentId: string | null): KeySummary {
@@ -151,7 +153,7 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
   const targetTier = key.tier === 2 ? 2 : 1;
   const targetLevel = key.level === 2 ? 2 : 1;
   const targetDays = keyDurationDays(key);
-  const targetPermanent = targetTier === 1 && key.durationSec === '0' && key.type !== 2;
+  const targetPermanent = keyIsPermanent(key);
 
   // 「升企业版」入口：只接受企业版卡密（卡密本身不编码版本，必须由服务端按登记信息校验）
   if (input.requireEnterprise && targetTier !== 2) {
