@@ -11,6 +11,7 @@ import {
   registerAccount,
   loginAccount,
   isPhoneTaken,
+  isNicknameLike,
   revokeSession,
   getProfile,
   listDevices,
@@ -279,6 +280,26 @@ router.post('/account/phone/bind', requireAccount, async (req, res) => {
     await AppDataSource.getRepository(Account).save(auth.account);
     phoneCodes.delete(phone);
     ok(res, await getProfile(auth.account), '手机号绑定成功');
+  } catch (e) {
+    if (e instanceof ApiError) return fail(res, e.message, e.code);
+    throw e;
+  }
+});
+
+// POST /api/v1/account/nickname（已登录修改昵称，客户端个人中心「编辑」入口使用）
+router.post('/account/nickname', requireAccount, async (req, res) => {
+  try {
+    const { error, value } = Joi.object({
+      nickname: Joi.string().trim().required().max(32),
+    }).validate(req.body);
+    if (error) return fail(res, `参数错误：${error.message}`, 400);
+    const nickname = String(value.nickname);
+    if (!isNicknameLike(nickname)) return fail(res, '昵称仅支持汉字、字母和数字（1-32 位）', 1020);
+
+    const auth = req.accountAuth!;
+    auth.account.nickname = nickname;
+    await AppDataSource.getRepository(Account).save(auth.account);
+    ok(res, await getProfile(auth.account), '昵称已更新');
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);
     throw e;
