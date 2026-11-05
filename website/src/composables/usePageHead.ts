@@ -18,13 +18,13 @@ interface PageHeadOptions {
   canonical?: boolean
 }
 
-/** 统一设置页面 title、description、keywords 与 canonical（自动拼接站点名） */
+/** 统一设置页面 title、description、keywords 与 canonical（站点名前缀自动拼接） */
 export function usePageHead(title?: string, description?: string, options: PageHeadOptions = {}) {
   const { siteName, settings } = useSite()
   const route = useRoute()
 
   useHead(() => ({
-    title: title ? `${title} - ${siteName.value}` : siteName.value,
+    title: title ? `${siteName.value} ${title}` : siteName.value,
     meta: [
       { name: 'description', content: description || '' },
       { name: 'keywords', content: settings.value.site_keywords || DEFAULT_KEYWORDS },

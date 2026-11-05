@@ -4,12 +4,13 @@
     <section class="hero">
       <div class="container hero-inner">
         <div class="hero-copy fade-up">
-          <span class="hero-badge">环境隔离 · 多开无冲突</span>
+          <span class="hero-badge">账号同步 · 团队协作 · 独立 IP</span>
           <h1 class="hero-title">{{ heroTitle }}</h1>
           <p class="hero-sub">{{ heroSubtitle }}</p>
           <div class="hero-actions">
             <RouterLink class="btn btn-primary btn-lg" to="/download">立即下载</RouterLink>
             <RouterLink class="btn btn-ghost btn-lg" to="/features">查看功能</RouterLink>
+            <RouterLink class="btn btn-ghost btn-lg" to="/pricing">查看定价</RouterLink>
           </div>
           <p v-if="release" class="hero-version">
             最新版本 v{{ release.latestVersion }}
@@ -125,6 +126,37 @@
       </div>
     </section>
 
+    <!-- 4.0 账号与团队能力 -->
+    <section class="section">
+      <div class="container">
+        <div class="section-head">
+          <h2 class="section-title">4.0 新增：从个人多开到团队协作</h2>
+          <p class="section-sub">账号体系、成员管理与独立 IP 打通，团队规模也能有序管理。</p>
+        </div>
+        <div class="grid grid-3">
+          <div class="card team-card">
+            <span class="team-kicker">团队面板</span>
+            <h3 class="team-title">成员、席位、到期一屏掌握</h3>
+            <p class="team-desc">管理员查看全团队在线与用量，成员只看自己的数据；权益变更实时推送，无需重启客户端。</p>
+          </div>
+          <div class="card team-card">
+            <span class="team-kicker">用户管理</span>
+            <h3 class="team-title">子账户与席位按需扩容</h3>
+            <p class="team-desc">创建子账户、停用、重置密码、解除锁定；企业版默认 10 席，扩容码 +5 / +10 / +20 / +50 只增不减。</p>
+          </div>
+          <div class="card team-card">
+            <span class="team-kicker">独立 IP</span>
+            <h3 class="team-title">资源池统一分配与回收</h3>
+            <p class="team-desc">socks5 / http 资源统一管理，按成员分配、按环境绑定出口；成员只能看到分配给自己的 IP。</p>
+          </div>
+        </div>
+        <div class="center team-actions">
+          <RouterLink class="btn btn-primary" to="/pricing">查看定价方案</RouterLink>
+          <RouterLink class="btn btn-ghost" to="/contact">企业采购咨询</RouterLink>
+        </div>
+      </div>
+    </section>
+
     <!-- 使用案例 -->
     <section v-if="cases.length" class="section">
       <div class="container">
@@ -223,9 +255,9 @@ import { usePageHead } from '@/composables/usePageHead'
 
 const { siteName, logo, settings, purchaseUrl } = useSite()
 usePageHead(
-  '电脑多开工具_应用多开软件',
+  '电脑多开工具_企业微信多开_团队多开软件',
   settings.value.site_description ||
-    'eBox 电脑多开工具，支持微信、企业微信等任意应用多开，环境独立隔离、免扫码自动登录，一台电脑稳定多开不卡顿。',
+    'eBox 电脑多开工具，支持微信、企业微信等任意应用多开，环境独立隔离、账号绑定跨设备恢复；内置团队面板、成员席位与独立 IP 资源池。',
 )
 
 const release = ref<LatestRelease | null>(null)
@@ -233,7 +265,7 @@ const cases = ref<SiteCase[]>([])
 
 const heroTitle = computed(() => settings.value.home_hero_title || '一台电脑，多开任意应用')
 const heroSubtitle = computed(
-  () => settings.value.home_hero_subtitle || '环境独立隔离 · 免扫码自动登录 · 体积小不卡顿',
+  () => settings.value.home_hero_subtitle || '环境独立隔离 · 登录即恢复权益 · 团队席位与独立 IP 管理',
 )
 
 /** 首页右侧轮播配图（JSON 数组字符串，空则回退默认展示卡） */
@@ -308,24 +340,30 @@ onUnmounted(() => {
 
 const features = [
   { icon: '🔒', title: '环境独立隔离', desc: '每个多开环境相互独立，配置、数据互不干扰。' },
+  { icon: '🔑', title: '账号权益同步', desc: '卡密绑定账号，换机、重装登录即恢复，不再担心卡密丢失。' },
+  { icon: '👥', title: '团队面板', desc: '成员、席位、在线状态与到期时间，管理员一屏掌握。' },
+  { icon: '🌐', title: '独立 IP 资源池', desc: 'socks5 / http 统一管理，按环境绑定出口，按成员分配。' },
   { icon: '⚡', title: '免扫码自动登录', desc: '一次配置，重复使用，省去反复扫码的麻烦。' },
   { icon: '🪶', title: '体积小不卡顿', desc: '无需虚拟机，占用资源低，多个环境同时运行也流畅。' },
   { icon: '🧩', title: '可视化管理', desc: '环境卡片化管理，启动、停止、查看状态一目了然。' },
+  { icon: '🧹', title: '全盘垃圾清理', desc: '系统、应用与聊天软件缓存一次清理，释放磁盘空间。' },
 ]
 
 const compareRows = [
   { name: '环境隔离', force: '无', vm: '完整隔离', ebox: '独立隔离' },
   { name: '资源占用', force: '低', vm: '高', ebox: '低' },
   { name: '多开数量', force: '不稳定', vm: '受限于硬件', ebox: '按需多开' },
+  { name: '账号与授权', force: '本机卡密', vm: '镜像内重复购买', ebox: '账号绑定 · 跨设备恢复' },
+  { name: '团队协作', force: '无', vm: '手动维护', ebox: '面板 + 席位 + IP 分配' },
   { name: '使用门槛', force: '操作复杂', vm: '配置繁琐', ebox: '安装即用' },
   { name: '数据管理', force: '易冲突', vm: '割裂', ebox: '集中管理' },
 ]
 
 const defaultStats = [
   { label: '支持系统', value: 'Windows' },
-  { label: '运行方式', value: '环境隔离' },
-  { label: '安装方式', value: '下载即用' },
-  { label: '更新方式', value: '在线更新' },
+  { label: '账号权益', value: '登录恢复' },
+  { label: '团队席位', value: '10 席起' },
+  { label: '独立 IP', value: '支持' },
 ]
 
 const stats = computed(() => {
@@ -660,6 +698,39 @@ onMounted(async () => {
   margin-top: 8px;
   color: var(--text-2);
   font-size: 14px;
+}
+
+.team-card {
+  padding: 26px 24px;
+}
+
+.team-kicker {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--primary-light);
+  color: var(--primary-color);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.team-title {
+  margin-top: 14px;
+  font-size: 18px;
+}
+
+.team-desc {
+  margin-top: 10px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.team-actions {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 28px;
+  flex-wrap: wrap;
 }
 
 .compare-wrap {

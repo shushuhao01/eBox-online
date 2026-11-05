@@ -112,7 +112,9 @@
           <div class="download-tips">
             <h2 class="block-title">安装说明</h2>
             <ol class="tips-list">
-              <li>下载完成后运行安装程序，按引导完成安装。</li>
+              <li>下载后解压得到 eBox.exe，双击即可运行，无需安装；覆盖升级只替换程序文件，不会删除环境数据与登录状态。</li>
+              <li>注册并登录账号后再使用：卡密绑定账号，换机、重装登录即可恢复权益。</li>
+              <li>登录后输入卡密完成激活；企业版卡密必须先登录再激活，否则会提示需登录。</li>
               <li>首次启动可能需要创建运行环境，请耐心等待。</li>
               <li>若下载失败，请尝试其他下载地址或更换浏览器。</li>
               <li>安装或使用中遇到问题，可查看<RouterLink class="inline-link" to="/docs">使用手册</RouterLink>或<RouterLink class="inline-link" to="/contact">联系我们</RouterLink>。</li>

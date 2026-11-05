@@ -13,6 +13,7 @@
         <div class="footer-col">
           <h4>产品</h4>
           <RouterLink to="/features">功能介绍</RouterLink>
+          <RouterLink to="/pricing">定价方案</RouterLink>
           <RouterLink to="/download">下载中心</RouterLink>
           <RouterLink to="/cases">使用案例</RouterLink>
         </div>

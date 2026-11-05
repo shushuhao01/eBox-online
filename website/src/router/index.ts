@@ -2,6 +2,7 @@ import type { RouteRecordRaw } from 'vue-router'
 
 import Home from '@/pages/Home.vue'
 import Features from '@/pages/Features.vue'
+import Pricing from '@/pages/Pricing.vue'
 import Cases from '@/pages/Cases.vue'
 import CaseDetail from '@/pages/CaseDetail.vue'
 import Download from '@/pages/Download.vue'
@@ -18,6 +19,7 @@ import ChannelRedirect from '@/pages/ChannelRedirect.vue'
 export const routes: RouteRecordRaw[] = [
   { path: '/', name: 'home', component: Home, meta: { title: '首页' } },
   { path: '/features', name: 'features', component: Features, meta: { title: '功能介绍' } },
+  { path: '/pricing', name: 'pricing', component: Pricing, meta: { title: '定价方案' } },
   { path: '/cases', name: 'cases', component: Cases, meta: { title: '使用案例' } },
   { path: '/cases/:id', name: 'case-detail', component: CaseDetail, meta: { title: '案例详情' } },
   { path: '/download', name: 'download', component: Download, meta: { title: '下载' } },

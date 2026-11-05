@@ -60,6 +60,7 @@ const menuOpen = ref(false)
 
 const defaultNav = [
   { label: '功能', url: '/features' },
+  { label: '定价', url: '/pricing' },
   { label: '案例', url: '/cases' },
   { label: '下载', url: '/download' },
   { label: '文档', url: '/docs' },

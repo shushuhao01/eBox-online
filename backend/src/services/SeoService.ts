@@ -10,6 +10,7 @@ const DEFAULT_ORIGIN = 'https://www.abc222.cn';
 const STATIC_ROUTES: { path: string; changefreq: string; priority: string }[] = [
   { path: '/', changefreq: 'weekly', priority: '1.0' },
   { path: '/features', changefreq: 'monthly', priority: '0.9' },
+  { path: '/pricing', changefreq: 'monthly', priority: '0.9' },
   { path: '/download', changefreq: 'weekly', priority: '0.9' },
   { path: '/cases', changefreq: 'weekly', priority: '0.8' },
   { path: '/articles', changefreq: 'weekly', priority: '0.8' },

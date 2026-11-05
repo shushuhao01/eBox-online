@@ -14,7 +14,7 @@
           <div class="manual-body">
             <h2 class="manual-title">{{ docTitle }}</h2>
             <p class="manual-desc">
-              涵盖安装、环境创建、登录配置与常见问题排查，帮助你快速上手 {{ siteName }}。
+              涵盖注册登录、卡密激活、团队面板、用户与席位、网络配置与独立 IP 分配、环境管理与常见问题排查，帮助你快速上手 {{ siteName }} 4.0。
             </p>
             <div class="manual-actions">
               <a
@@ -33,7 +33,7 @@
 
         <div class="doc-tips">
           <h2 class="block-title">常用入口</h2>
-          <div class="grid grid-3">
+          <div class="grid grid-2">
             <RouterLink class="card tip-card" to="/download">
               <div class="tip-icon">⬇️</div>
               <div class="tip-name">下载安装包</div>
@@ -43,6 +43,11 @@
               <div class="tip-icon">📝</div>
               <div class="tip-name">使用教程</div>
               <div class="tip-desc">阅读分步操作教程</div>
+            </RouterLink>
+            <RouterLink class="card tip-card" to="/pricing">
+              <div class="tip-icon">💳</div>
+              <div class="tip-name">定价方案</div>
+              <div class="tip-desc">对比个人版与企业版权益</div>
             </RouterLink>
             <RouterLink class="card tip-card" to="/contact">
               <div class="tip-icon">💬</div>
@@ -66,7 +71,7 @@ import { usePageHead } from '@/composables/usePageHead'
 import ArticlePinned from '@/components/ArticlePinned.vue'
 
 const { siteName, docUrl, docTitle, settings } = useSite()
-usePageHead('文档中心', 'eBox 使用手册与操作指引。')
+usePageHead('文档中心', 'eBox 4.0 使用手册：账号注册登录、卡密激活、团队面板、成员席位、网络配置与独立 IP 分配。')
 
 const docTarget = computed(() => settings.value.doc_target || '_blank')
 </script>

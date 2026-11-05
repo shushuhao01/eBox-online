@@ -16,6 +16,7 @@ const TIMEOUT_MS = 8000
 const STATIC_ROUTES = [
   { path: '/', changefreq: 'weekly', priority: '1.0' },
   { path: '/features', changefreq: 'monthly', priority: '0.9' },
+  { path: '/pricing', changefreq: 'monthly', priority: '0.9' },
   { path: '/download', changefreq: 'weekly', priority: '0.9' },
   { path: '/cases', changefreq: 'weekly', priority: '0.8' },
   { path: '/articles', changefreq: 'weekly', priority: '0.8' },
