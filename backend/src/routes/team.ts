@@ -10,6 +10,7 @@ import {
   resetTeamMemberPassword,
   unlockTeamMember,
   deleteTeamMember,
+  restoreTeamMember,
   getEnterpriseInfo,
 } from '../services/EnterpriseService';
 import { assignResources, listEnterprisePool, recycleResource, setAssignmentPlaintext } from '../services/IpResourceService';
@@ -58,6 +59,7 @@ router.get('/team/members', async (req, res) => {
       pageSize: Number(req.query.pageSize) || 20,
       keyword: String(req.query.keyword || ''),
       status: Number.isFinite(status) ? status : undefined,
+      includeDeleted: req.query.includeDeleted === '1' || req.query.includeDeleted === 'true',
     });
     ok(res, result);
   } catch (e) {
@@ -129,6 +131,22 @@ router.post('/team/members/:id/reset-password', async (req, res) => {
   }
 });
 
+// POST /api/team/members/:id/restore（恢复已注销成员，占用一个席位）
+router.post('/team/members/:id/restore', async (req, res) => {
+  try {
+    const result = await restoreTeamMember(
+      req.accountAuth!.account,
+      req.enterpriseAuth!,
+      String(req.params.id),
+      clientIp(req)
+    );
+    ok(res, result, '成员已恢复');
+  } catch (e) {
+    if (sendError(res, e)) return;
+    throw e;
+  }
+});
+
 // POST /api/team/members/:id/unlock（解除密码错误锁定）
 router.post('/team/members/:id/unlock', async (req, res) => {
   try {
@@ -146,16 +164,19 @@ router.post('/team/members/:id/unlock', async (req, res) => {
 });
 
 // DELETE /api/team/members/:id（释放席位；占用中的资源返回清单并拒绝）
+// permanent=1 表示彻底删除（账号一并清除，不可恢复）
 router.delete('/team/members/:id', async (req, res) => {
   try {
+    const permanent = req.query.permanent === '1' || req.query.permanent === 'true';
     const result = await deleteTeamMember(
       req.accountAuth!.account,
       req.enterpriseAuth!,
       String(req.params.id),
-      clientIp(req)
+      clientIp(req),
+      permanent
     );
-    pushKick(result.accountId, '您的账号已被企业管理员移除');
-    ok(res, null, '成员已删除，席位已释放');
+    pushKick(result.accountId, permanent ? '您的账号已被企业管理员彻底删除' : '您的账号已被企业管理员移除');
+    ok(res, null, permanent ? '成员已彻底删除' : '成员已删除，席位已释放');
   } catch (e) {
     if (sendError(res, e)) return;
     throw e;

@@ -153,7 +153,7 @@ export interface TeamMemberList {
 
 export async function listTeamMembers(
   enterprise: Enterprise,
-  opts: { page?: number; pageSize?: number; keyword?: string; status?: number }
+  opts: { page?: number; pageSize?: number; keyword?: string; status?: number; includeDeleted?: boolean }
 ): Promise<TeamMemberList> {
   const page = Math.max(1, Number(opts.page) || 1);
   const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 20));
@@ -164,6 +164,10 @@ export async function listTeamMembers(
 
   if (opts.status !== undefined && opts.status !== null && opts.status >= 0) {
     qb.andWhere('m.status = :status', { status: opts.status });
+  }
+  // 默认不返回已注销成员（status=3）；管理员在客户端页面设置里可切换为保留显示
+  if (!opts.includeDeleted && opts.status !== 3) {
+    qb.andWhere('m.status <> 3');
   }
   const kw = (opts.keyword || '').trim();
   if (kw) {
@@ -417,8 +421,9 @@ export async function deleteTeamMember(
   admin: Account,
   ctx: EnterpriseContext,
   memberId: string,
-  ip?: string
-): Promise<{ accountId: string; disabled: true }> {
+  ip?: string,
+  permanent = false
+): Promise<{ accountId: string; disabled: boolean; permanent: boolean }> {
   const member = await getMemberOf(ctx, memberId);
   if (member.role === 1) throw new ApiError('企业管理员不可删除', 4005);
 
@@ -462,16 +467,60 @@ export async function deleteTeamMember(
     }
   }
 
+  const account = await accountRepo().findOneBy({ id: member.accountId });
+
+  if (permanent) {
+    // 彻底删除：成员记录、账号、登录会话与设备一并清理，之后无法恢复
+    await sessionRepo().delete({ accountId: member.accountId });
+    await deviceRepo().delete({ accountId: member.accountId });
+    await memberRepo().delete({ id: member.id });
+    await accountRepo().delete({ id: member.accountId });
+    await writeOperationLog(
+      admin.id,
+      'team.member.purge',
+      account?.login || member.accountId,
+      '永久删除成员账号（不可恢复）',
+      ip || ''
+    );
+    return { accountId: member.accountId, disabled: true, permanent: true };
+  }
+
   member.status = 3;
   await memberRepo().save(member);
-  const account = await accountRepo().findOneBy({ id: member.accountId });
   if (account) {
     account.status = 2;
     await accountRepo().save(account);
   }
   await revokeMemberSessions(member.accountId);
   await writeOperationLog(admin.id, 'team.member.delete', account?.login || member.accountId, '删除成员并释放席位', ip || '');
-  return { accountId: member.accountId, disabled: true };
+  return { accountId: member.accountId, disabled: true, permanent: false };
+}
+
+/** 恢复已注销成员：受企业席位限制（恢复后占用一个席位） */
+export async function restoreTeamMember(
+  admin: Account,
+  ctx: EnterpriseContext,
+  memberId: string,
+  ip?: string
+): Promise<{ accountId: string; seats: number; usedSeats: number }> {
+  const member = await getMemberOf(ctx, memberId);
+  if (member.status !== 3) throw new ApiError('该成员未被删除，无需恢复', 4009);
+  if (member.role === 1) throw new ApiError('企业管理员不可修改', 4005);
+
+  const used = await memberRepo().countBy({ enterpriseId: ctx.enterprise.id, status: 1 });
+  if (used >= ctx.enterprise.seats) {
+    throw new ApiError(`席位已满（${used}/${ctx.enterprise.seats}），请先购买席位扩容码`, 4090);
+  }
+
+  const account = await accountRepo().findOneBy({ id: member.accountId });
+  if (!account) throw new ApiError('成员账号不存在，无法恢复', 4009);
+
+  member.status = 1;
+  await memberRepo().save(member);
+  account.status = 1;
+  await accountRepo().save(account);
+  await writeOperationLog(admin.id, 'team.member.restore', account.login, '恢复成员并占用席位', ip || '');
+  return { accountId: account.id, seats: ctx.enterprise.seats, usedSeats: used + 1 };
 }
 
 /** 企业信息（客户端团队面板展示） */
