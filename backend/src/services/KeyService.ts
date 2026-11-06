@@ -244,7 +244,8 @@ export async function clientActivate(
   // 更新码状态
   if (key.status === 0) {
     key.status = 1;
-    key.usedAt = new Date();
+    // 老离线码自动登记时已写入本机首次激活时间（授权起算点），不能被本次激活重置
+    if (!key.usedAt) key.usedAt = new Date();
   }
   await keyRepo().save(key);
 

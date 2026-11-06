@@ -2,7 +2,7 @@ import { AppDataSource } from '../config/database';
 import { Account } from '../entities/account/Account';
 import { LicenseKey } from '../entities/LicenseKey';
 import { ApiError } from '../middleware/errorHandler';
-import { decodeAndVerify } from '../crypto/licenseCodec';
+import { codeFingerprint, decodeAndVerify, type ParsedLicense } from '../crypto/licenseCodec';
 import { clientActivate, findByCode } from './KeyService';
 import {
   getEntitlements,
@@ -30,6 +30,68 @@ export interface ActivateAccountInput {
   enterpriseName?: string;
   /** 「升企业版」入口专用：卡密必须为企业版，否则拒绝（不影响普通激活/续费/绑定） */
   requireEnterprise?: boolean;
+  /** 该码在本机的首次激活时间（Unix 秒，客户端上报）：老离线码自动登记时作为起算点 */
+  activatedAt?: number;
+}
+
+/** 系统登记（老离线码自动登记）的操作人 id，后台无此用户，仅占位满足非空约束 */
+const SYSTEM_CREATED_BY = '0';
+
+/**
+ * 老版本离线码自动登记。
+ *
+ * KeyGen 签发的离线码（verMinor=8 / 旧绝对到期格式）在平台没有记录，
+ * 老用户升级并注册后可「注册即绑定」：验签通过即按载荷补登 license_keys，
+ * 再走正常账号激活链路绑定账号、登记设备，权益与正常卡密一致。
+ *
+ * 时长制老码的起算点取客户端上报的本机首次激活时间（与服务端本地离线授权一致），
+ * 缺失或异常时按当前时间兜底；已过期则拒绝登记，避免旧码重复获得整期授权。
+ * 在线托管码（verMinor=9）必然已登记，查不到说明已被删除，仍按 1009 拒绝。
+ */
+async function registerLegacyOfflineKey(
+  rawCode: string,
+  parsed: ParsedLicense,
+  activatedAt?: number
+): Promise<LicenseKey> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  let usedAtSec = 0;
+  if (parsed.isDurationFormat) {
+    const reported = Number(activatedAt || 0);
+    usedAtSec = reported > 0 && reported <= nowSec + 300 ? reported : nowSec;
+    if (parsed.durationSec > 0 && usedAtSec + parsed.durationSec <= nowSec) {
+      throw new ApiError('该激活码已过期，无法绑定账号', 1004);
+    }
+  } else if (parsed.expire > 0 && parsed.expire <= nowSec) {
+    throw new ApiError('该激活码已过期，无法绑定账号', 1004);
+  }
+
+  const row = keyRepo().create({
+    code: rawCode.trim(),
+    codeFp: codeFingerprint(rawCode),
+    type: parsed.isDurationFormat ? 1 : 2,
+    durationSec: String(parsed.isDurationFormat ? parsed.durationSec : 0),
+    expireAt: parsed.isDurationFormat ? null : String(parsed.expire),
+    bound: parsed.bound ? 1 : 0,
+    unbindMax: parsed.bound ? parsed.unbindMax : 0,
+    status: 0,
+    remark: '老版本离线码自动登记',
+    createdBy: SYSTEM_CREATED_BY,
+    tier: 1,
+    level: 1,
+    seats: 1,
+    maxEnvs: 0,
+    durationDays: parsed.isDurationFormat ? Math.floor(parsed.durationSec / 86400) : 0,
+    usedAt: usedAtSec > 0 ? new Date(usedAtSec * 1000) : null,
+    activatedAt: usedAtSec > 0 ? new Date(usedAtSec * 1000) : null,
+  });
+  try {
+    return await keyRepo().save(row);
+  } catch (e) {
+    // 并发首绑：另一请求已登记同一张码，回读复用
+    const existing = await findByCode(rawCode);
+    if (existing) return existing;
+    throw e;
+  }
 }
 
 export interface KeySummary {
@@ -142,8 +204,13 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
   }
   const parsed = decodeAndVerify(input.code);
   if (!parsed) throw new ApiError('激活码无效', 1001);
-  const key = await findByCode(input.code);
-  if (!key) throw new ApiError('该卡密未在平台登记，无法绑定账号', 1009);
+  let key = await findByCode(input.code);
+  // 老版本离线码：验签通过即可自动登记（注册即绑定），登记后权益与正常卡密一致
+  const legacyRegistered = !key;
+  if (!key) {
+    if (parsed.onlineManaged) throw new ApiError('该卡密未在平台登记，无法绑定账号', 1009);
+    key = await registerLegacyOfflineKey(input.code, parsed, input.activatedAt);
+  }
   if (key.accountId && key.accountId !== account.id) {
     throw new ApiError('该卡密已绑定其他账号', 1010);
   }
@@ -231,7 +298,17 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
   let newExpireSec = 0;
   let permanent = false;
   let startSec = 0;
-  if (targetPermanent) {
+  if (legacyRegistered) {
+    // 老离线码自动登记：到期沿用本机离线授权口径
+    //   时长制 = 本机首次激活时间 + 卡内时长；绝对到期 = 载荷到期时间戳
+    permanent = targetPermanent;
+    newExpireSec = permanent ? 0 : keyExpireSeconds(key);
+  } else if (key.type === 2) {
+    // 换机码：绝对到期，继承原卡剩余期限。不能按 durationDays 从当前时间重算，
+    // 否则每次换机都会重新获得一整期授权（如年卡换机后变成“从今天起再一年”）。
+    permanent = targetPermanent;
+    newExpireSec = permanent ? 0 : Number(key.expireAt || 0);
+  } else if (targetPermanent) {
     permanent = true;
     if (deferred) startSec = Math.max(nowSec, keyExpireSeconds(currentKey as LicenseKey));
   } else if (deferred) {
@@ -259,9 +336,15 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
   if (activated.revoked) throw new ApiError('该卡密已作废', 1004);
   if (activated.expired) throw new ApiError('该卡密已过期', 1004);
   if (activated.exceeded) throw new ApiError('该卡密已在其他设备使用，请先解绑', 1011);
+  if (legacyRegistered) {
+    // clientActivate 已把新登记的行走成“已激活”，同步回内存实例，
+    // 避免下面的 save 用登记时的 status=0 覆盖回去
+    key.status = 1;
+  }
 
   // 覆盖升级：旧卡置为“已覆盖失效”并保留 replaced_by（预约升级不失效旧卡，到期后自动切换）
-  if (!deferred && (upgraded || (currentKey && currentTier === targetTier && currentLevel === targetLevel && key.accountId && key.id !== currentKey.id))) {
+  // 换机码不参与：它替换的是同一张卡的旧码（旧码解绑时已置 status=4），不应作废账号下的其他卡
+  if (key.type !== 2 && !deferred && (upgraded || (currentKey && currentTier === targetTier && currentLevel === targetLevel && key.accountId && key.id !== currentKey.id))) {
     const oldKeys = await keyRepo()
       .createQueryBuilder('k')
       .where('k.account_id = :accountId', { accountId: account.id })
@@ -351,6 +434,8 @@ export interface BindKeyInput {
   machineFp?: string;
   disclaimerVersion?: number;
   ip?: string;
+  /** 该码在本机的首次激活时间（Unix 秒，客户端上报） */
+  activatedAt?: number;
 }
 
 /** 老用户把本机已有卡密绑到当前账号 */
@@ -358,10 +443,39 @@ export async function bindExistingKey(account: Account, input: BindKeyInput): Pr
   if (await isEnterpriseMember(account)) {
     throw new ApiError('子账户不能绑定卡密', 2002);
   }
-  if (!decodeAndVerify(input.code)) throw new ApiError('激活码无效', 1001);
+  const parsed = decodeAndVerify(input.code);
+  if (!parsed) throw new ApiError('激活码无效', 1001);
   const key = await findByCode(input.code);
-  if (!key) throw new ApiError('该卡密未在平台登记，无法绑定账号', 1009);
+  // 老版本离线码：平台无记录但验签有效 → 转账号激活链路，完成「自动登记 + 绑定账号 + 登记设备」
+  if (!key) {
+    if (parsed.onlineManaged) throw new ApiError('该卡密未在平台登记，无法绑定账号', 1009);
+    if (!input.machineFp) throw new ApiError('缺少设备指纹，请更新到最新版客户端后重试', 400, 400);
+    return activateForAccount(account, {
+      code: input.code,
+      machineFp: input.machineFp,
+      mode: 'renew',
+      disclaimerVersion: input.disclaimerVersion,
+      activatedAt: input.activatedAt,
+      ip: input.ip,
+    });
+  }
   if (key.accountId && key.accountId !== account.id) throw new ApiError('该卡密已绑定其他账号', 1010);
+  // 未激活使用的码（含解绑换机签发的新码，status=0）：走账号激活链路，
+  // 一次完成「登记设备 + 绑定账号」，用户输入换机码即可恢复，无需回原电脑激活。
+  if (key.status === 0) {
+    if (!input.machineFp) throw new ApiError('缺少设备指纹，请更新到最新版客户端后重试', 400, 400);
+    return activateForAccount(account, {
+      code: input.code,
+      machineFp: input.machineFp,
+      mode: 'renew',
+      disclaimerVersion: input.disclaimerVersion,
+      activatedAt: input.activatedAt,
+      ip: input.ip,
+    });
+  }
+  if (key.status === 4) throw new ApiError('该激活码已换机失效，请使用换机后收到的新激活码', 1004);
+  if (key.status === 2 || key.status === 5) throw new ApiError('该卡密已作废或已失效', 1004);
+  if (key.status === 3) throw new ApiError('该卡密已过期', 1004);
   if (key.status !== 1) throw new ApiError('仅已激活使用的卡密可绑定账号', 1012);
   if (key.tier === 2 && account.enterpriseId) throw new ApiError('当前账号已属于企业', 2004);
   if (key.tier === 1 && account.enterpriseId) throw new ApiError('企业账号不能绑定个人卡密', 2003);

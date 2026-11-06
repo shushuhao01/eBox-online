@@ -455,6 +455,8 @@ router.post('/license/activate', requireAccount, async (req, res) => {
       enterpriseName: Joi.string().allow('').max(128).default(''),
       // 「升企业版」专用：要求卡密必须为企业版卡密，避免误用个人卡；其它入口不传
       requireEnterprise: Joi.boolean().default(false),
+      // 老离线码自动登记的起算点（客户端上报本机首次激活时间）
+      activatedAt: Joi.number().integer().min(0).optional(),
     }).validate(req.body);
     if (error) return fail(res, `参数错误：${error.message}`, 400);
     const result = await activateForAccount(req.accountAuth!.account, {
@@ -477,6 +479,8 @@ router.post('/account/bind-key', requireAccount, async (req, res) => {
       code: Joi.string().required().max(200),
       machineFp: Joi.string().allow('').max(64).default(''),
       disclaimerVersion: Joi.number().integer().min(1).optional(),
+      // 老离线码自动登记的起算点（客户端上报本机首次激活时间）
+      activatedAt: Joi.number().integer().min(0).optional(),
     }).validate(req.body);
     if (error) return fail(res, `参数错误：${error.message}`, 400);
     const result = await bindExistingKey(req.accountAuth!.account, {
