@@ -69,6 +69,7 @@ export interface SiteCase {
   metrics: string | null
   sort: number
   status: string
+  views: number
 }
 
 export interface SiteContact {

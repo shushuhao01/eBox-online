@@ -33,6 +33,7 @@ export interface SiteCase {
   metrics: string | null
   sort: number
   status: string
+  views: number
   createdAt: string
   updatedAt: string | null
 }
@@ -119,6 +120,18 @@ export function getSiteSettings() {
 
 export function updateSiteSettings(patch: Record<string, string>) {
   return put<Record<string, string>>('/site/settings', patch)
+}
+
+export interface DocPushResult {
+  delivered: number
+  manualUrl: string
+  manualTitle: string
+  configVersion: number
+}
+
+/** 保存使用手册并立即推送（SSE config 事件，在线客户端自动刷新） */
+export function pushDocConfig(patch: { doc_title: string; doc_url: string; doc_target: string }) {
+  return post<DocPushResult>('/site/doc/push', patch)
 }
 
 export function getSiteSecurity() {

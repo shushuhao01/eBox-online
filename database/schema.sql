@@ -225,6 +225,7 @@ CREATE TABLE IF NOT EXISTS `site_cases` (
   `metrics` TEXT NULL,                           -- JSON 数组
   `sort` INT NOT NULL DEFAULT 0,
   `status` VARCHAR(16) NOT NULL DEFAULT 'published',
+  `views` INT UNSIGNED NOT NULL DEFAULT 0,        -- 浏览量（详情页访问自增）
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NULL ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

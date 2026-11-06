@@ -15,6 +15,8 @@ import { SiteDownloadMirror } from '../../entities/SiteDownloadMirror';
 import { SiteAccessRule } from '../../entities/SiteAccessRule';
 import { ok, fail, clientIp, superAdminRequired } from '../../middleware/helpers';
 import { writeOperationLog } from '../../services/LogService';
+import { buildClientConfig, bumpConfigVersion } from '../../services/SkuService';
+import { broadcastConfig } from '../../services/AccountEventService';
 import {
   getSiteSettings,
   setSiteSettings,
@@ -143,6 +145,31 @@ router.put('/settings', async (req, res) => {
   clearReleaseCache();
   await writeOperationLog(req.auth!.userId, '官网-更新站点设置', 'site_settings', `更新 ${Object.keys(patch).length} 项`, clientIp(req));
   ok(res, await getSiteSettings());
+});
+
+// 使用手册「立即推送」：保存当前配置 + 版本号自增 + SSE 通知在线客户端刷新
+router.post('/doc/push', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const patch: Record<string, string> = {};
+  if (body.doc_title !== undefined) patch.doc_title = String(body.doc_title ?? '').trim().slice(0, 64);
+  if (body.doc_url !== undefined) {
+    const url = String(body.doc_url ?? '').trim();
+    if (url && !/^https?:\/\//i.test(url)) return fail(res, '手册地址需以 http(s):// 开头', 400);
+    patch.doc_url = url;
+  }
+  if (body.doc_target !== undefined) patch.doc_target = body.doc_target === '_self' ? '_self' : '_blank';
+  if (Object.keys(patch).length) await setSiteSettings(patch);
+  clearReleaseCache();
+  const version = await bumpConfigVersion();
+  const config = await buildClientConfig();
+  const delivered = broadcastConfig({
+    configVersion: version,
+    manualUrl: config.manualUrl,
+    manualTitle: config.manualTitle,
+  });
+  await writeOperationLog(req.auth!.userId, '官网-推送使用手册', 'site_settings',
+    `在线 ${delivered} 个连接`, clientIp(req));
+  ok(res, { delivered, manualUrl: config.manualUrl, manualTitle: config.manualTitle, configVersion: version });
 });
 
 // ==================== 安全策略 ====================

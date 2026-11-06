@@ -30,6 +30,9 @@ export class SiteCase {
   @Column({ type: 'varchar', length: 16, default: 'published' })
   status!: string;
 
+  @Column({ type: 'int', unsigned: true, default: 0, comment: '浏览量' })
+  views!: number;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 

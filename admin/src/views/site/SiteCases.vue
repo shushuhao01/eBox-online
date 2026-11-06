@@ -22,6 +22,9 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="浏览量" width="100" align="right" prop="views">
+        <template #default="{ row }">{{ row.views ?? 0 }}</template>
+      </el-table-column>
       <el-table-column label="排序" width="80" align="center" prop="sort" />
       <el-table-column label="操作" width="130" fixed="right" align="center">
         <template #default="{ row }">

@@ -3,6 +3,7 @@ import { AppConfig } from '../entities/account/AppConfig';
 import { ApiError } from '../middleware/errorHandler';
 import { buildSkuRows } from '../config/ensureAccountSchema';
 import { broadcastConfig } from './AccountEventService';
+import { getSiteSettings } from './SiteService';
 
 /**
  * 客户端档位与商城升级链接
@@ -35,6 +36,10 @@ export interface ClientConfigView {
   configVersion: number;
   /** 线上故障放行开关（C-5）：为 true 时允许绑定码离线完成首次绑定 */
   allowOfflineFirstBind: boolean;
+  /** 使用手册地址（官网管理-使用手册）：客户端常见问题弹窗跳转；空=客户端用内置兜底地址 */
+  manualUrl: string;
+  /** 使用手册标题（官网管理-使用手册），客户端仅作展示备用 */
+  manualTitle: string;
   tiers: ClientTierView[];
 }
 
@@ -105,7 +110,7 @@ function parsePositive(raw: string, fallback: number): number {
 
 /** 客户端配置整包（/api/config/client 与 SSE config 事件同构） */
 export async function buildClientConfig(): Promise<ClientConfigView> {
-  const [links, seatAddonMallUrl, buyUrl, otherBuyUrl, allowOfflineFirstBind, disclaimerRaw, ipVersionRaw, configVersionRaw] = await Promise.all([
+  const [links, seatAddonMallUrl, buyUrl, otherBuyUrl, allowOfflineFirstBind, disclaimerRaw, ipVersionRaw, configVersionRaw, site] = await Promise.all([
     getUpgradeLinks(),
     getSeatAddonMallUrl(),
     getClientBuyUrl(),
@@ -114,6 +119,7 @@ export async function buildClientConfig(): Promise<ClientConfigView> {
     getConfigValue('disclaimer_version', '1'),
     getConfigValue('ip_resource_version', '1'),
     getConfigValue('config_version', '1'),
+    getSiteSettings(),
   ]);
   return {
     disclaimerVersion: parsePositive(disclaimerRaw, 1),
@@ -122,10 +128,19 @@ export async function buildClientConfig(): Promise<ClientConfigView> {
     buyUrl,
     otherBuyUrl,
     allowOfflineFirstBind,
+    manualUrl: site.doc_url || '',
+    manualTitle: site.doc_title || '使用手册',
     ipResourceVersion: parsePositive(ipVersionRaw, 1),
     configVersion: parsePositive(configVersionRaw, 1),
     tiers: listClientTiers().map((t) => ({ ...t, mallUrl: links[t.code] || '' })),
   };
+}
+
+/** 配置版本号自增：后台改完客户端配置后调用，客户端拉取时据此判断需要刷新 */
+export async function bumpConfigVersion(): Promise<number> {
+  const next = parsePositive(await getConfigValue('config_version', '1'), 1) + 1;
+  await saveConfigValue('config_version', String(next), '客户端配置版本（后台变更后自增）');
+  return next;
 }
 
 export interface SaveMallConfigInput {

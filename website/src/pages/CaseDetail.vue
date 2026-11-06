@@ -9,6 +9,7 @@
 
         <template v-else>
           <span class="tag">{{ detail.industry }}</span>
+          <span class="meta-views">{{ detail.views || 0 }} 次浏览</span>
           <h1 class="detail-title">{{ detail.title }}</h1>
           <p v-if="detail.summary" class="detail-summary">{{ detail.summary }}</p>
 
@@ -90,6 +91,12 @@ onMounted(async () => {
 
 .back-link:hover {
   color: var(--primary-color);
+}
+
+.meta-views {
+  margin-left: 10px;
+  color: var(--text-3);
+  font-size: 13px;
 }
 
 .detail-title {

@@ -7,7 +7,7 @@ import { log } from './logger';
  * - site_visit_log 表不存在 → 自动创建（含索引）；字段不全 → 自动补齐
  * - site_online 表不存在 → 自动创建（实时在线状态）；字段不全 → 自动补齐
  * - site_channel_link / site_channel_click / site_channel_stats_daily 表不存在 → 自动创建；字段不全 → 自动补齐
- * - site_articles 表已存在但字段不全 → 自动补齐（如 expire_at / link_url）
+ * - site_articles / site_cases 表已存在但字段不全 → 自动补齐（如 expire_at / link_url / views）
  * 其余表结构仍由 database/schema.sql 统一管理（synchronize: false 不变）。
  */
 
@@ -134,6 +134,11 @@ const PATCH_TABLES: Array<{ table: string; columns: Array<{ name: string; ddl: s
       { name: 'expire_at', ddl: 'DATETIME NULL DEFAULT NULL' },
       { name: 'link_url', ddl: 'VARCHAR(500) NULL DEFAULT NULL' },
     ],
+  },
+  {
+    // 官网案例浏览量（老库升级后自动补列）
+    table: 'site_cases',
+    columns: [{ name: 'views', ddl: 'INT UNSIGNED NOT NULL DEFAULT 0' }],
   },
   {
     // 管理员账号：令牌版本（改密 / 退出登录后旧 JWT 失效）与登录失败锁定

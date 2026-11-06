@@ -1,7 +1,7 @@
 <template>
   <div v-loading="loading" class="site-panel">
     <el-alert
-      title="使用手册地址填写飞书文档链接后，官网「使用手册」入口点击即可跳转。"
+      title="手册地址同时用于官网「使用手册」入口与客户端常见问题弹窗；改完点「立即推送」，在线客户端会马上刷新。"
       type="info"
       :closable="false"
       show-icon
@@ -31,6 +31,7 @@
 
     <div class="panel-footer">
       <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+      <el-button type="success" :loading="pushing" @click="push">立即推送</el-button>
       <el-button @click="load">重置</el-button>
     </div>
   </div>
@@ -40,10 +41,11 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Link } from '@element-plus/icons-vue'
-import { getSiteSettings, updateSiteSettings } from '@/api/site'
+import { getSiteSettings, pushDocConfig, updateSiteSettings } from '@/api/site'
 
 const loading = ref(false)
 const saving = ref(false)
+const pushing = ref(false)
 
 const form = reactive({
   doc_title: '使用手册',
@@ -72,6 +74,26 @@ async function save() {
     // 拦截器已提示
   } finally {
     saving.value = false
+  }
+}
+
+async function push() {
+  if (!form.doc_url) {
+    ElMessage.warning('请先填写手册地址')
+    return
+  }
+  pushing.value = true
+  try {
+    const res = await pushDocConfig({ ...form })
+    ElMessage.success(
+      res.delivered > 0
+        ? `已推送至 ${res.delivered} 个在线连接，客户端重新打开常见问题即为最新手册`
+        : '已保存，当前无在线客户端，客户端下次打开时自动获取最新手册'
+    )
+  } catch {
+    // 拦截器已提示
+  } finally {
+    pushing.value = false
   }
 }
 

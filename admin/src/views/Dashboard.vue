@@ -127,7 +127,7 @@ function renderTrend(t: Trend) {
   if (!trendRef.value) return
   trendChart = initChart(trendRef.value, {
     tooltip: { trigger: 'axis' },
-    legend: { data: ['激活', '心跳'], textStyle: { color: AXIS_TEXT } },
+    legend: { data: ['激活', '心跳'], top: 0, left: 'center', textStyle: { color: AXIS_TEXT } },
     grid: { left: 40, right: 40, top: 40, bottom: 24 },
     xAxis: {
       type: 'category',

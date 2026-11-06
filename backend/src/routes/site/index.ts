@@ -200,10 +200,13 @@ router.get('/cases', async (req, res) => {
   ok(res, rows);
 });
 
-/** 案例详情 */
+/** 案例详情（views 自增） */
 router.get('/cases/:id', async (req, res) => {
-  const row = await AppDataSource.getRepository(SiteCase).findOneBy({ id: req.params.id });
+  const repo = AppDataSource.getRepository(SiteCase);
+  const row = await repo.findOneBy({ id: req.params.id });
   if (!row || row.status !== 'published') return fail(res, '案例不存在', 1002);
+  await repo.increment({ id: row.id }, 'views', 1);
+  row.views += 1;
   ok(res, row);
 });
 
