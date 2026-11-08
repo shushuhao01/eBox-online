@@ -141,6 +141,15 @@ const PATCH_TABLES: Array<{ table: string; columns: Array<{ name: string; ddl: s
     columns: [{ name: 'views', ddl: 'INT UNSIGNED NOT NULL DEFAULT 0' }],
   },
   {
+    // 产品线隔离：正式版 formal / 游戏版 game（老库升级自动回填 formal，存量卡密不受影响）
+    table: 'license_keys',
+    columns: [{ name: 'product', ddl: "VARCHAR(16) NOT NULL DEFAULT 'formal'" }],
+  },
+  {
+    table: 'key_batches',
+    columns: [{ name: 'product', ddl: "VARCHAR(16) NOT NULL DEFAULT 'formal'" }],
+  },
+  {
     // 管理员账号：令牌版本（改密 / 退出登录后旧 JWT 失效）与登录失败锁定
     table: 'users',
     columns: [

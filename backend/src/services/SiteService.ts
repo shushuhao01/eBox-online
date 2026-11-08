@@ -54,6 +54,14 @@ export const SITE_DEFAULTS: Record<string, string> = {
   release_file_name: '',
   release_file_size: '0',
   release_file_sha256: '',
+  // 游戏版直下（独立发布位，与正式版互不影响）
+  game_release_version: '',
+  game_release_date: '',
+  game_release_changelog: '[]',
+  game_release_file_url: '',
+  game_release_file_name: '',
+  game_release_file_size: '0',
+  game_release_file_sha256: '',
 };
 
 /** 公开给官网前台的设置键（不包含敏感项） */
@@ -147,16 +155,27 @@ function strip_storage_prefix(name: string): string {
   return stripped || name;
 }
 
-let releaseCache: { at: number; data: LatestRelease } | null = null;
+export type ReleaseProduct = 'formal' | 'game';
+
+const releaseCache: Record<ReleaseProduct, { at: number; data: LatestRelease } | null> = {
+  formal: null,
+  game: null,
+};
 const RELEASE_CACHE_MS = 60 * 1000;
 
-/** 解析 update.json 候选路径（仓库根目录 dist/update.json） */
-function resolveUpdateJsonPath(): string | null {
+/** 设置键前缀：正式版 release_*，游戏版 game_release_* */
+function releasePrefix(product: ReleaseProduct): string {
+  return product === 'game' ? 'game_release_' : 'release_';
+}
+
+/** 解析 update.json 候选路径（正式版 dist/update.json；游戏版优先 dist/update-game.json） */
+function resolveUpdateJsonPath(product: ReleaseProduct = 'formal'): string | null {
+  const fileName = product === 'game' ? 'update-game.json' : 'update.json';
   const candidates = [
     process.env.SITE_UPDATE_JSON || '',
-    path.resolve(process.cwd(), '../../dist/update.json'),
-    path.resolve(__dirname, '../../../../dist/update.json'),
-    path.resolve(process.cwd(), 'dist/update.json'),
+    path.resolve(process.cwd(), `../../dist/${fileName}`),
+    path.resolve(__dirname, `../../../../dist/${fileName}`),
+    path.resolve(process.cwd(), `dist/${fileName}`),
   ].filter(Boolean);
   for (const p of candidates) {
     try {
@@ -180,10 +199,15 @@ function parseChangelog(value: string): string[] {
   return value.split('\n').map((s) => s.trim()).filter(Boolean);
 }
 
-/** 读取最新版本信息（后台直下安装包优先，否则回退 dist/update.json + 后台配置的下载地址） */
-export async function getLatestRelease(): Promise<LatestRelease | null> {
+/**
+ * 读取最新版本信息（后台直下安装包优先，否则回退 dist/update.json + 后台配置的下载地址）
+ * 产品线独立：正式版读 release_* / update.json，游戏版读 game_release_* / update-game.json。
+ */
+export async function getLatestRelease(product: ReleaseProduct = 'formal'): Promise<LatestRelease | null> {
   const now = Date.now();
-  if (releaseCache && now - releaseCache.at < RELEASE_CACHE_MS) return releaseCache.data;
+  const cached = releaseCache[product];
+  if (cached && now - cached.at < RELEASE_CACHE_MS) return cached.data;
+  const prefix = releasePrefix(product);
 
   const mirrors = await AppDataSource.getRepository(SiteDownloadMirror).find({
     where: { enabled: 1 },
@@ -199,27 +223,28 @@ export async function getLatestRelease(): Promise<LatestRelease | null> {
   }));
 
   const settings = await getSiteSettings();
-  const fileUrl = settings.release_file_url || '';
+  const fileUrl = settings[`${prefix}file_url`] || '';
 
   // 官网直下：后台上传了安装包时，优先使用后台配置的版本号 / 更新日志 / 直链
   if (fileUrl) {
     const data: LatestRelease = {
-      latestVersion: settings.release_version || '',
+      latestVersion: settings[`${prefix}version`] || '',
       latestVersionCode: 0,
-      releaseDate: settings.release_date || '',
+      releaseDate: settings[`${prefix}date`] || '',
       downloadUrl: fileUrl,
-      downloadFileName: settings.release_file_name || strip_storage_prefix(url_file_name(fileUrl)),
-      downloadSha256: settings.release_file_sha256 || '',
-      downloadSize: Number(settings.release_file_size || 0) || 0,
-      changelog: parseChangelog(settings.release_changelog || ''),
+      downloadFileName:
+        settings[`${prefix}file_name`] || strip_storage_prefix(url_file_name(fileUrl)),
+      downloadSha256: settings[`${prefix}file_sha256`] || '',
+      downloadSize: Number(settings[`${prefix}file_size`] || 0) || 0,
+      changelog: parseChangelog(settings[`${prefix}changelog`] || ''),
       mirrors: mirrorList,
     };
-    releaseCache = { at: now, data };
+    releaseCache[product] = { at: now, data };
     return data;
   }
 
-  // 回退：GitHub Release 自动生成的 dist/update.json
-  const p = resolveUpdateJsonPath();
+  // 回退：GitHub Release 自动生成的 dist/update.json（游戏版为 update-game.json）
+  const p = resolveUpdateJsonPath(product);
   if (!p) return null;
   let raw: Record<string, unknown>;
   try {
@@ -239,13 +264,18 @@ export async function getLatestRelease(): Promise<LatestRelease | null> {
     changelog: Array.isArray(raw.changelog) ? (raw.changelog as string[]) : [],
     mirrors: mirrorList,
   };
-  releaseCache = { at: now, data };
+  releaseCache[product] = { at: now, data };
   return data;
 }
 
-/** 清空版本缓存（后台手动同步时调用） */
-export function clearReleaseCache(): void {
-  releaseCache = null;
+/** 清空版本缓存（后台手动同步时调用；可只清某一产品线） */
+export function clearReleaseCache(product?: ReleaseProduct): void {
+  if (product) {
+    releaseCache[product] = null;
+    return;
+  }
+  releaseCache.formal = null;
+  releaseCache.game = null;
 }
 
 // ==================== 访问控制规则（带缓存） ====================

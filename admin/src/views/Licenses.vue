@@ -397,6 +397,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import {
   Search, Refresh, RefreshLeft, Plus, Download, CopyDocument, CircleClose, Delete,
@@ -415,6 +416,10 @@ import {
   KEY_STATUS, KEY_TYPE, copyText, formatDuration, formatTime, formatUnixTs, formatUnbindMax,
   durationKeyExpireText, deviceStatusClass, deviceStatusText,
 } from '@/utils/format'
+
+// 产品线：由路由 meta 决定（/licenses=正式版，/game/licenses=游戏版）
+const route = useRoute()
+const product: 'formal' | 'game' = route.meta.product === 'game' ? 'game' : 'formal'
 
 // ============ 筛选 ============
 const filters = reactive<{
@@ -444,6 +449,7 @@ async function load() {
   loading.value = true
   try {
     const res = await getKeys({
+      product,
       page: page.value,
       pageSize: pageSize.value,
       status: filters.status,
@@ -672,7 +678,7 @@ async function loadCustomers() {
 
 async function loadBatches() {
   try {
-    const res = await getBatches({ page: 1, pageSize: 100 })
+    const res = await getBatches({ product, page: 1, pageSize: 100 })
     batches.value = res.list
   } catch {
     batches.value = []
@@ -732,6 +738,7 @@ async function submitGenerate() {
   const picked = genForm.batchId
   const isExistingBatch = picked !== null && batches.value.some((b) => String(b.id) === String(picked))
   const params: GenerateParams = {
+    product,
     durationSec: genForm.durationSec,
     bound: bindMode !== 'unbound',
     unbindMax: bindMode === 'unbound' ? 0 : Number(bindMode.replace('bound-', '')),
@@ -852,6 +859,7 @@ async function handleExport() {
   exporting.value = true
   try {
     const blob = await exportKeys({
+      product,
       status: filters.status || '',
       type: filters.type || '',
       start: dateRange.value?.[0] || '',

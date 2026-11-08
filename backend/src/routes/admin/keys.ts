@@ -29,6 +29,8 @@ router.post('/keys/generate', superAdminRequired, async (req, res) => {
   console.log(`[gen] route enter t=${Date.now()}`);
   try {
     const { error, value } = Joi.object({
+      // 产品线：不传按正式版处理，老前端请求行为不变
+      product: Joi.string().valid('formal', 'game').default('formal'),
       durationSec: Joi.number().integer().min(0).required(),
       bound: Joi.boolean().required(),
       unbindMax: Joi.number().integer().min(-1).max(255).default(3),
@@ -51,7 +53,13 @@ router.post('/keys/generate', superAdminRequired, async (req, res) => {
     const maxEnvs =
       value.maxEnvs === null ? await resolveMaxEnvs(value.version, value.level, 0) : Number(value.maxEnvs);
     const seats = await resolveSeats(value.version, value.level, value.seats);
-    const { codes, batchId } = await generateKeys({ ...value, seats, maxEnvs, createdBy: req.auth!.userId });
+    const { codes, batchId } = await generateKeys({
+      ...value,
+      product: value.product === 'game' ? 'game' : 'formal',
+      seats,
+      maxEnvs,
+      createdBy: req.auth!.userId,
+    });
     console.log(`[gen] generateKeys 返回 ${codes.length} 个 t=${Date.now()}`);
     const durationText = value.durationSec === 0 ? '永久' : `${Math.floor(value.durationSec / 86400)}天`;
     const unbindText = !value.bound ? '-' : value.unbindMax < 0 ? '不限' : value.unbindMax === 0 ? '禁止' : `每月${value.unbindMax}次`;
@@ -65,7 +73,7 @@ router.post('/keys/generate', superAdminRequired, async (req, res) => {
       req.auth!.userId,
       '生成激活码',
       target,
-      `数量=${value.count} 时长=${durationText} 绑定=${value.bound ? '绑定' : '通用'} 解绑上限=${unbindText} 版本=${value.version === 2 ? '企业' : '个人'} 级别=${value.level === 2 ? '高级' : '普通'} 席位=${seats > 0 ? seats : '不限制'} 环境数量=${maxEnvs > 0 ? maxEnvs : '不限制'}${value.customerId ? ` 客户ID=${value.customerId}` : ''}`,
+      `产品=${value.product === 'game' ? '游戏版' : '正式版'} 数量=${value.count} 时长=${durationText} 绑定=${value.bound ? '绑定' : '通用'} 解绑上限=${unbindText} 版本=${value.version === 2 ? '企业' : '个人'} 级别=${value.level === 2 ? '高级' : '普通'} 席位=${seats > 0 ? seats : '不限制'} 环境数量=${maxEnvs > 0 ? maxEnvs : '不限制'}${value.customerId ? ` 客户ID=${value.customerId}` : ''}`,
       clientIp(req)
     );
     console.log(`[gen] respond t=${Date.now()}`);
@@ -85,6 +93,9 @@ router.get('/keys', async (req, res) => {
     .leftJoin(Customer, 'c', 'c.id = k.customer_id')
     .where('1=1');
 
+  // 产品线隔离：默认只列正式版，游戏版页面显式传 product=game
+  const product = String(req.query.product || 'formal') === 'game' ? 'game' : 'formal';
+  qb.andWhere('k.product = :product', { product });
   const status = String(req.query.status || '');
   if (status !== '' && status !== 'all') qb.andWhere('k.status = :s', { s: Number(status) });
   else qb.andWhere('k.status != 5'); // 默认隐藏「已删除」
@@ -221,6 +232,9 @@ router.get('/keys/export', async (req, res) => {
     .leftJoin(Customer, 'c', 'c.id = k.customer_id')
     .where('1=1');
 
+  // 产品线隔离：默认只列正式版，游戏版页面显式传 product=game
+  const product = String(req.query.product || 'formal') === 'game' ? 'game' : 'formal';
+  qb.andWhere('k.product = :product', { product });
   const status = String(req.query.status || '');
   if (status !== '' && status !== 'all') qb.andWhere('k.status = :s', { s: Number(status) });
   else qb.andWhere('k.status != 5'); // 默认隐藏「已删除」

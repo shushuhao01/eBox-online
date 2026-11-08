@@ -23,6 +23,8 @@ export const routes: RouteRecordRaw[] = [
   { path: '/cases', name: 'cases', component: Cases, meta: { title: '使用案例' } },
   { path: '/cases/:id', name: 'case-detail', component: CaseDetail, meta: { title: '案例详情' } },
   { path: '/download', name: 'download', component: Download, meta: { title: '下载' } },
+  // 游戏版独立落地页：复用下载组件，按 meta.product 读取游戏版发布位
+  { path: '/game', name: 'game', component: Download, meta: { title: '游戏版', product: 'game' } },
   { path: '/articles', name: 'articles', component: Articles, meta: { title: '文章中心' } },
   { path: '/articles/:slug', name: 'article-detail', component: ArticleDetail, meta: { title: '文章详情' } },
   { path: '/docs', name: 'docs', component: Docs, meta: { title: '文档中心' } },

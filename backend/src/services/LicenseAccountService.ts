@@ -68,6 +68,8 @@ async function registerLegacyOfflineKey(
   const row = keyRepo().create({
     code: rawCode.trim(),
     codeFp: codeFingerprint(rawCode),
+    // 验签命中哪条产品线就登记到哪条产品线，避免游戏码混入正式版库存
+    product: parsed.product,
     type: parsed.isDurationFormat ? 1 : 2,
     durationSec: String(parsed.isDurationFormat ? parsed.durationSec : 0),
     expireAt: parsed.isDurationFormat ? null : String(parsed.expire),

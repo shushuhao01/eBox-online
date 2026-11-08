@@ -73,6 +73,8 @@ export interface SiteMirror {
 }
 
 export interface ReleaseConfig {
+  /** 产品线：formal=正式版 game=游戏版 */
+  product?: 'formal' | 'game'
   release_version: string
   release_date: string
   release_changelog: string
@@ -292,13 +294,13 @@ export function uploadSiteImage(file: File) {
 
 // ==================== 版本 / 统计 ====================
 
-export function syncRelease() {
-  return post<{ synced: boolean }>('/site/release/sync')
+export function syncRelease(product: 'formal' | 'game' = 'formal') {
+  return post<{ synced: boolean }>('/site/release/sync', { product })
 }
 
-/** 读取官网直下配置（版本号 / 更新日志 / 安装包信息） */
-export function getReleaseConfig() {
-  return get<ReleaseConfig>('/site/release')
+/** 读取官网直下配置（版本号 / 更新日志 / 安装包信息）；product=game 读游戏版发布位 */
+export function getReleaseConfig(product: 'formal' | 'game' = 'formal') {
+  return get<ReleaseConfig>('/site/release', { product })
 }
 
 /** 保存官网直下配置（不含文件本身） */
@@ -307,8 +309,8 @@ export function saveReleaseConfig(data: Partial<ReleaseConfig>) {
 }
 
 /** 上传安装包（exe / zip）：以原始二进制提交，文件名通过 query 传递 */
-export function uploadReleaseFile(file: File) {
-  const url = `/site/release/upload?filename=${encodeURIComponent(file.name)}`
+export function uploadReleaseFile(file: File, product: 'formal' | 'game' = 'formal') {
+  const url = `/site/release/upload?filename=${encodeURIComponent(file.name)}&product=${product}`
   return request.post(url, file, {
     headers: { 'Content-Type': 'application/octet-stream' },
     timeout: 0,

@@ -1,10 +1,14 @@
 import request, { get, post, del } from './request'
 import type { PageResult } from './request'
 
+/** 产品线：formal=正式版 game=游戏版 */
+export type LicenseProduct = 'formal' | 'game'
+
 export interface LicenseKeyItem {
   id: string
   code: string
   codeFp?: string
+  product?: LicenseProduct
   type: number
   durationSec: string
   expireAt: string | null
@@ -48,6 +52,8 @@ export interface KeyDevice {
 }
 
 export interface GenerateParams {
+  /** 产品线，不传=正式版 */
+  product?: LicenseProduct
   durationSec: number
   bound: boolean
   unbindMax: number
@@ -67,6 +73,8 @@ export interface GenerateParams {
 }
 
 export type KeyListParams = {
+  /** 产品线，不传=正式版 */
+  product?: LicenseProduct
   page?: number
   pageSize?: number
   status?: number | string

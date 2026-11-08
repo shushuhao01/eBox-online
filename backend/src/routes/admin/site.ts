@@ -660,50 +660,64 @@ router.delete('/media/:id', async (req, res) => {
 
 // ==================== 官网直下（版本与安装包） ====================
 
-/** 从全部设置中挑选官网直下相关字段 */
-function pickReleaseConfig(all: Record<string, string>) {
+/**
+ * 从全部设置中挑选官网直下相关字段。
+ * 产品线隔离：正式版 release_*，游戏版 game_release_*；对外字段名保持一致，前端按 product 选域。
+ */
+function pickReleaseConfig(all: Record<string, string>, product: 'formal' | 'game' = 'formal') {
+  const p = product === 'game' ? 'game_release_' : 'release_';
   return {
-    release_version: all.release_version || '',
-    release_date: all.release_date || '',
-    release_changelog: all.release_changelog || '[]',
-    release_file_url: all.release_file_url || '',
-    release_file_name: all.release_file_name || '',
-    release_file_size: all.release_file_size || '0',
-    release_file_sha256: all.release_file_sha256 || '',
+    product,
+    release_version: all[`${p}version`] || '',
+    release_date: all[`${p}date`] || '',
+    release_changelog: all[`${p}changelog`] || '[]',
+    release_file_url: all[`${p}file_url`] || '',
+    release_file_name: all[`${p}file_name`] || '',
+    release_file_size: all[`${p}file_size`] || '0',
+    release_file_sha256: all[`${p}file_sha256`] || '',
   };
 }
 
-router.get('/release', async (_req, res) => {
-  ok(res, pickReleaseConfig(await getSiteSettings()));
+function releaseProductOf(v: unknown): 'formal' | 'game' {
+  return v === 'game' ? 'game' : 'formal';
+}
+
+router.get('/release', async (req, res) => {
+  const product = releaseProductOf(req.query.product);
+  ok(res, pickReleaseConfig(await getSiteSettings(), product));
 });
 
 router.put('/release', superAdminRequired, async (req, res) => {
   const { error, value } = Joi.object({
+    product: Joi.string().valid('formal', 'game').default('formal'),
     release_version: Joi.string().allow('', null).max(64).default(''),
     release_date: Joi.string().allow('', null).max(32).default(''),
     release_changelog: Joi.any(),
   }).validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   const v = value as Record<string, unknown>;
+  const product = releaseProductOf(v.product);
+  const p = product === 'game' ? 'game_release_' : 'release_';
   const before = await getSiteSettings();
-  const oldVersion = (before.release_version || '').trim();
+  const oldVersion = (before[`${p}version`] || '').trim();
   const newVersion = String(v.release_version || '').trim();
   const changelogJson = normalizeChangelog(v.release_changelog);
   await setSiteSettings({
-    release_version: newVersion,
-    release_date: String(v.release_date || ''),
-    release_changelog: changelogJson,
+    [`${p}version`]: newVersion,
+    [`${p}date`]: String(v.release_date || ''),
+    [`${p}changelog`]: changelogJson,
   });
-  clearReleaseCache();
+  clearReleaseCache(product);
   await writeOperationLog(
     req.auth!.userId,
-    '官网-更新版本信息',
+    product === 'game' ? '官网-更新游戏版版本信息' : '官网-更新版本信息',
     String(v.release_version || ''),
     `日期=${v.release_date || '-'}`,
     clientIp(req)
   );
   // 版本号变化时发送升级通知（只发渠道与站内信，异步执行不阻塞响应）
-  if (newVersion && newVersion !== oldVersion) {
+  // 游戏版为独立通道，暂不触达正式版用户
+  if (product === 'formal' && newVersion && newVersion !== oldVersion) {
     let changelog: string[] = [];
     try {
       const parsed = JSON.parse(changelogJson) as unknown;
@@ -713,7 +727,7 @@ router.put('/release', superAdminRequired, async (req, res) => {
     }
     void notifyVersionUpgrade(newVersion, changelog);
   }
-  ok(res, pickReleaseConfig(await getSiteSettings()));
+  ok(res, pickReleaseConfig(await getSiteSettings(), product));
 });
 
 /**
@@ -722,6 +736,8 @@ router.put('/release', superAdminRequired, async (req, res) => {
  */
 router.post('/release/upload', superAdminRequired, express.raw({ type: () => true, limit: RELEASE_UPLOAD_LIMIT }), async (req, res) => {
   try {
+    const product = releaseProductOf(req.query.product);
+    const p = product === 'game' ? 'game_release_' : 'release_';
     const buf = req.body as Buffer;
     if (!Buffer.isBuffer(buf) || !buf.length) return fail(res, '上传内容为空', 400);
 
@@ -739,7 +755,7 @@ router.post('/release/upload', superAdminRequired, express.raw({ type: () => tru
 
     // 清理上一个安装包文件（仅限本站 releases 目录）
     const all = await getSiteSettings();
-    const oldUrl = all.release_file_url || '';
+    const oldUrl = all[`${p}file_url`] || '';
     if (oldUrl.startsWith('/api/uploads/releases/')) {
       try {
         const oldFile = path.join(RELEASE_UPLOAD_DIR, path.basename(oldUrl));
@@ -750,20 +766,20 @@ router.post('/release/upload', superAdminRequired, express.raw({ type: () => tru
     }
 
     await setSiteSettings({
-      release_file_url: url,
-      release_file_name: orig ? path.basename(orig) : filename,
-      release_file_size: String(buf.length),
-      release_file_sha256: sha256,
+      [`${p}file_url`]: url,
+      [`${p}file_name`]: orig ? path.basename(orig) : filename,
+      [`${p}file_size`]: String(buf.length),
+      [`${p}file_sha256`]: sha256,
     });
-    clearReleaseCache();
+    clearReleaseCache(product);
     await writeOperationLog(
       req.auth!.userId,
-      '官网-上传安装包',
+      product === 'game' ? '官网-上传游戏版安装包' : '官网-上传安装包',
       orig || filename,
       `${(buf.length / 1048576).toFixed(1)}MB`,
       clientIp(req)
     );
-    ok(res, pickReleaseConfig(await getSiteSettings()));
+    ok(res, pickReleaseConfig(await getSiteSettings(), product));
   } catch (e) {
     return fail(res, e instanceof Error ? e.message : '上传失败', 500, 500);
   }
@@ -772,8 +788,15 @@ router.post('/release/upload', superAdminRequired, express.raw({ type: () => tru
 // ==================== 版本同步 / 统计 ====================
 
 router.post('/release/sync', superAdminRequired, async (req, res) => {
-  clearReleaseCache();
-  await writeOperationLog(req.auth!.userId, '官网-同步版本信息', 'latest-release', null, clientIp(req));
+  const product = releaseProductOf(req.query.product ?? req.body?.product);
+  clearReleaseCache(product);
+  await writeOperationLog(
+    req.auth!.userId,
+    product === 'game' ? '官网-同步游戏版版本信息' : '官网-同步版本信息',
+    'latest-release',
+    null,
+    clientIp(req)
+  );
   ok(res, { synced: true });
 });
 

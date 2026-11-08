@@ -28,8 +28,9 @@ CREATE TABLE IF NOT EXISTS `users` (
 -- 激活码主表
 CREATE TABLE IF NOT EXISTS `license_keys` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  `code` VARCHAR(200) NOT NULL UNIQUE,           -- 2BOX-... 全文
+  `code` VARCHAR(200) NOT NULL UNIQUE,           -- EBOX-/GBOX-... 全文
   `code_fp` CHAR(64) NOT NULL UNIQUE,            -- code 的 SHA256 十六进制(64位)，加速查询
+  `product` VARCHAR(16) NOT NULL DEFAULT 'formal', -- 产品线：formal=正式版 game=游戏版
   `type` TINYINT NOT NULL DEFAULT 1,             -- 1=库存(时长制) 2=换机(绝对到期)
   `duration_sec` BIGINT NOT NULL DEFAULT 0,      -- 时长制有效秒数，0=永久
   `expire_at` BIGINT NULL,                       -- 换机码绝对到期时间戳(Unix秒)
@@ -166,6 +167,7 @@ ON DUPLICATE KEY UPDATE `cfg_value` = `cfg_value`;
 CREATE TABLE IF NOT EXISTS `key_batches` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(64) NOT NULL,
+  `product` VARCHAR(16) NOT NULL DEFAULT 'formal', -- 产品线：formal=正式版 game=游戏版
   `remark` VARCHAR(255) NULL,
   `created_by` BIGINT NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

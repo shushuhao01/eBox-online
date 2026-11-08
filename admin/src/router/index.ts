@@ -24,6 +24,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'enterprises', name: 'Enterprises', component: () => import('@/views/Enterprises.vue'), meta: { title: '企业管理', icon: 'OfficeBuilding' } },
       { path: 'licenses', name: 'Licenses', component: () => import('@/views/Licenses.vue'), meta: { title: '激活码管理', icon: 'Key' } },
       { path: 'batches', name: 'Batches', component: () => import('@/views/Batches.vue'), meta: { title: '码批次', icon: 'Collection' } },
+      // 游戏版（产品线隔离）：复用同一套页面组件，通过 meta.product 切换数据域
+      { path: 'game/licenses', name: 'GameLicenses', component: () => import('@/views/Licenses.vue'), meta: { title: '游戏激活码', icon: 'Key', product: 'game' } },
+      { path: 'game/batches', name: 'GameBatches', component: () => import('@/views/Batches.vue'), meta: { title: '游戏码批次', icon: 'Collection', product: 'game' } },
       { path: 'customers', name: 'Customers', component: () => import('@/views/Customers.vue'), meta: { title: '客户管理', icon: 'User' } },
       { path: 'mall', name: 'Mall', component: () => import('@/views/Mall.vue'), meta: { title: '环境与席位', icon: 'ShoppingCart' } },
       { path: 'seat-addons', name: 'SeatAddons', component: () => import('@/views/SeatAddons.vue'), meta: { title: '升级与扩容码', icon: 'Ticket' } },

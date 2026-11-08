@@ -13,8 +13,15 @@ const repo = () => AppDataSource.getRepository(KeyBatch);
 router.get('/batches', async (req, res) => {
   const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
   const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || '20'), 10) || 20));
-  const total = await repo().count();
-  const rows = await repo().find({ order: { createdAt: 'DESC' }, skip: (page - 1) * pageSize, take: pageSize });
+  // 产品线隔离：默认只列正式版批次，游戏版页面显式传 product=game
+  const product = String(req.query.product || 'formal') === 'game' ? 'game' : 'formal';
+  const total = await repo().count({ where: { product } });
+  const rows = await repo().find({
+    where: { product },
+    order: { createdAt: 'DESC' },
+    skip: (page - 1) * pageSize,
+    take: pageSize,
+  });
   const keyRepo = AppDataSource.getRepository(LicenseKey);
   const enriched = await Promise.all(
     rows.map(async (b) => {
@@ -33,6 +40,7 @@ router.get('/batches', async (req, res) => {
 router.post('/batches', async (req, res) => {
   const { error, value } = Joi.object({
     name: Joi.string().required().max(64),
+    product: Joi.string().valid('formal', 'game').default('formal'),
     remark: Joi.string().allow('', null).max(255).default(null),
   }).validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);

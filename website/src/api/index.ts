@@ -192,8 +192,9 @@ export function getContacts(): Promise<SiteContact[]> {
   return http.get('/api/site/contacts') as unknown as Promise<SiteContact[]>
 }
 
-export function getLatestRelease(): Promise<LatestRelease> {
-  return http.get('/api/site/latest-release') as unknown as Promise<LatestRelease>
+export function getLatestRelease(product: 'formal' | 'game' = 'formal'): Promise<LatestRelease> {
+  const query = product === 'game' ? '?product=game' : ''
+  return http.get(`/api/site/latest-release${query}`) as unknown as Promise<LatestRelease>
 }
 
 /** 渠道短链解析结果 */

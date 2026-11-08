@@ -125,12 +125,17 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Plus, Collection, CopyDocument, Delete } from '@element-plus/icons-vue'
 import { getBatches, createBatch, getBatchDetail, deleteBatch, type KeyBatch } from '@/api/batches'
 import type { LicenseKeyItem } from '@/api/keys'
 import TimeCell from '@/components/TimeCell.vue'
 import { KEY_STATUS, copyText, formatTime } from '@/utils/format'
+
+// 产品线：由路由 meta 决定（/batches=正式版，/game/batches=游戏版）
+const route = useRoute()
+const product: 'formal' | 'game' = route.meta.product === 'game' ? 'game' : 'formal'
 
 const list = ref<KeyBatch[]>([])
 const page = ref(1)
@@ -141,7 +146,7 @@ const loading = ref(false)
 async function load() {
   loading.value = true
   try {
-    const res = await getBatches({ page: page.value, pageSize: pageSize.value })
+    const res = await getBatches({ product, page: page.value, pageSize: pageSize.value })
     list.value = res.list
     total.value = res.total
   } finally {
@@ -177,7 +182,7 @@ async function submit() {
   if (!valid) return
   saving.value = true
   try {
-    await createBatch({ name: form.name, remark: form.remark || undefined })
+    await createBatch({ name: form.name, product, remark: form.remark || undefined })
     ElMessage.success('批次创建成功')
     createVisible.value = false
     form.name = ''

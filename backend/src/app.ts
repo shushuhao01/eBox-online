@@ -15,6 +15,7 @@ import { ensureSchema } from './config/ensureSchema';
 import { ensureAccountSchema } from './config/ensureAccountSchema';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { authRequired } from './middleware/helpers';
+import { keyringErrors } from './crypto/licenseCodec';
 
 import clientRoutes from './routes/client';
 import accountRoutes from './routes/account';
@@ -220,6 +221,16 @@ async function main() {
   try {
     await initializeDatabase();
     log.info(`✅ 数据库连接成功：${env.db.database} @ ${env.db.host}:${env.db.port}`);
+
+    // 密钥自检：私钥 d 必须与内置公钥配对，否则签出的码客户端无法验签。
+    // 未配置私钥不算失败（沿用原有按需签名行为）；配错则拒绝启动，避免批量发出废码。
+    const keyringErrs = keyringErrors();
+    if (keyringErrs.length) {
+      for (const e of keyringErrs) log.error(`密钥自检失败：${e}`);
+      throw new Error(`密钥配置自检失败（${keyringErrs.length} 项），已拒绝启动`);
+    }
+    if (!env.privateKeyD) log.warn('未配置正式版私钥（LICENSE_PRIVATE_KEY_D_FORMAL / LICENSE_PRIVATE_KEY_D），无法签发激活码');
+    if (!env.gamePrivateKeyD) log.warn('未配置游戏版私钥（LICENSE_PRIVATE_KEY_D_GAME），无法签发游戏版激活码');
 
     // 结构自愈：自动创建 / 补齐官网访问明细表（无需手动执行建表 SQL）
     await ensureSchema();

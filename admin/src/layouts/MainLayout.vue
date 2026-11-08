@@ -151,6 +151,7 @@ interface MenuItem {
   path: string
   icon: string
   superOnly?: boolean
+  product?: 'formal' | 'game'
 }
 
 interface MenuGroup {
@@ -193,6 +194,16 @@ const menus: MenuNode[] = [
       { title: '激活码管理', path: '/licenses', icon: 'Key' },
       { title: '码批次', path: '/batches', icon: 'Collection' },
       { title: '升级与扩容码', path: '/seat-addons', icon: 'Ticket' },
+    ],
+  },
+  {
+    kind: 'group',
+    key: 'game',
+    title: '游戏版',
+    icon: 'Star',
+    children: [
+      { title: '游戏激活码', path: '/game/licenses', icon: 'Key', product: 'game' },
+      { title: '游戏码批次', path: '/game/batches', icon: 'Collection', product: 'game' },
     ],
   },
   {

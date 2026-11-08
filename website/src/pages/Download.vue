@@ -2,8 +2,10 @@
   <div class="download">
     <section class="page-hero">
       <div class="container">
-        <h1 class="page-title">下载中心</h1>
-        <p class="page-sub">获取 {{ siteName }} 最新版本安装包。若主下载地址较慢，可尝试下方的备用地址。</p>
+        <h1 class="page-title">{{ isGame ? '游戏版下载' : '下载中心' }}</h1>
+        <p class="page-sub">
+          获取 {{ siteName }}{{ isGame ? ' 游戏版' : '' }}最新版本安装包。若主下载地址较慢，可尝试下方的备用地址。
+        </p>
         <div v-if="release" class="version-line">
           <span class="version-badge">v{{ release.latestVersion }}</span>
           <span v-if="release.releaseDate" class="version-meta">更新于 {{ formatDate(release.releaseDate) }}</span>
@@ -23,7 +25,7 @@
         <template v-else>
           <div class="main-card">
             <div class="main-info">
-              <h2 class="main-title">{{ siteName }} v{{ release.latestVersion }}</h2>
+              <h2 class="main-title">{{ siteName }}{{ isGame ? ' 游戏版' : '' }} v{{ release.latestVersion }}</h2>
               <ul class="main-meta">
                 <li v-if="release.releaseDate">
                   <span>更新日期</span>{{ formatDate(release.releaseDate) }}
@@ -58,6 +60,12 @@
                 <div class="os-desc">支持主流 Windows 系统</div>
               </div>
             </div>
+          </div>
+
+          <div class="version-switch">
+            <span class="text-3">切换版本：</span>
+            <RouterLink v-if="isGame" class="inline-link" to="/download">正式版下载</RouterLink>
+            <RouterLink v-else class="inline-link" to="/game">游戏版下载</RouterLink>
           </div>
 
           <div v-if="release.mirrors.length" class="mirrors">
@@ -128,12 +136,23 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { getLatestRelease, track, type LatestRelease } from '@/api'
 import { useSite } from '@/composables/useSite'
 import { usePageHead } from '@/composables/usePageHead'
 
+// 产品线由路由 meta 决定：/download=正式版，/game=游戏版（独立发布位）
+const route = useRoute()
+const isGame = route.meta.product === 'game'
+const product: 'formal' | 'game' = isGame ? 'game' : 'formal'
+
 const { siteName } = useSite()
-usePageHead('下载中心', '下载 eBox 最新版本安装包，提供直链、镜像与网盘等多种下载地址。')
+usePageHead(
+  isGame ? '游戏版下载' : '下载中心',
+  isGame
+    ? '下载 eBox 游戏版最新版本安装包，提供直链、镜像与网盘等多种下载地址。'
+    : '下载 eBox 最新版本安装包，提供直链、镜像与网盘等多种下载地址。'
+)
 
 const release = ref<LatestRelease | null>(null)
 const loading = ref(true)
@@ -215,7 +234,7 @@ async function copyCred(key: string, value: string | null) {
 
 onMounted(async () => {
   try {
-    const data = await getLatestRelease()
+    const data = await getLatestRelease(product)
     release.value = data && data.latestVersion ? data : null
   } catch {
     release.value = null
@@ -226,6 +245,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.version-switch {
+  margin: 20px 0 8px;
+  font-size: 14px;
+}
+
 .page-hero {
   padding: 64px 0 20px;
   background: linear-gradient(160deg, #eef4ff 0%, #ffffff 70%);

@@ -8,7 +8,7 @@ import { UnbindLog } from '../entities/UnbindLog';
 import { RevokeLog } from '../entities/RevokeLog';
 import { KeyCustomer } from '../entities/KeyCustomer';
 import { KeyBatch } from '../entities/KeyBatch';
-import { buildLicenseCode, decodeAndVerify, codeFingerprint } from '../crypto/licenseCodec';
+import { buildLicenseCode, decodeAndVerify, codeFingerprint, type LicenseProduct } from '../crypto/licenseCodec';
 import { getConfigValue, getNoticeEvent } from './ConfigService';
 import { ApiError } from '../middleware/errorHandler';
 
@@ -25,6 +25,7 @@ const monthKey = (d: Date = new Date()) =>
 // 面板生成激活码（库存码，时长制）
 // ---------------------------------------------------------------------------
 export interface GenerateParams {
+  product?: LicenseProduct; // 默认 formal；游戏版传 game
   durationSec: number; // 0=永久
   bound: boolean;
   unbindMax: number; // -1=不限 0=禁止 n=每月n次
@@ -43,17 +44,18 @@ export interface GenerateParams {
 
 export async function generateKeys(p: GenerateParams): Promise<{ codes: string[]; batchId: string | null }> {
   console.log(`[gen] start count=${p.count} durationSec=${p.durationSec} bound=${p.bound} customerId=${p.customerId || '-'} batchId=${p.batchId || '-'} batchName=${p.batchName || '-'} t=${Date.now()}`);
+  const product: LicenseProduct = p.product === 'game' ? 'game' : 'formal';
   let batchId: string | null = null;
   const batchRepo = AppDataSource.getRepository(KeyBatch);
   if (p.batchId) {
-    // 归入已有批次
+    // 归入已有批次（产品线必须一致，禁止游戏码混入正式版批次）
     const existing = await batchRepo.findOneBy({ id: p.batchId });
     console.log(`[gen] findBatchBy done existing=${existing ? existing.id : 'null'} t=${Date.now()}`);
-    if (existing) batchId = existing.id;
+    if (existing && existing.product === product) batchId = existing.id;
   }
   if (!batchId && p.batchName) {
     const batch = await batchRepo.save(
-      batchRepo.create({ name: p.batchName, remark: p.remark, createdBy: p.createdBy })
+      batchRepo.create({ name: p.batchName, product, remark: p.remark, createdBy: p.createdBy })
     );
     batchId = batch.id;
     console.log(`[gen] createBatch done id=${batchId} t=${Date.now()}`);
@@ -62,11 +64,12 @@ export async function generateKeys(p: GenerateParams): Promise<{ codes: string[]
   // 批量插入：一次 INSERT 全部行，避免逐条 save 在大批量（如 500 个）时多次数据库往返导致请求超时
   const rows: Partial<LicenseKey>[] = [];
   for (let i = 0; i < p.count; i++) {
-    const code = buildLicenseCode(p.durationSec, p.bound, p.unbindMax, true);
+    const code = buildLicenseCode(p.durationSec, p.bound, p.unbindMax, true, true, product);
     if (!code) throw new ApiError('生成失败：私钥未配置', 500);
     rows.push({
       code,
       codeFp: codeFingerprint(code),
+      product,
       type: 1,
       durationSec: String(p.durationSec),
       expireAt: null,
@@ -472,13 +475,15 @@ export async function clientUnbind(
   }
 
   // 服务端签发换机码（绝对到期格式 verMinor=7）
-  const newCode = buildLicenseCode(remainExpire, parsed.bound, parsed.unbindMax, false);
+  const product: LicenseProduct = key.product === 'game' ? 'game' : 'formal';
+  const newCode = buildLicenseCode(remainExpire, parsed.bound, parsed.unbindMax, false, true, product);
   if (!newCode) throw new ApiError('换机码签发失败：私钥未配置', 500);
 
   const newKey = await keyRepo().save(
     keyRepo().create({
       code: newCode,
       codeFp: codeFingerprint(newCode),
+      product,
       type: 2,
       durationSec: '0',
       expireAt: String(remainExpire),
@@ -797,13 +802,15 @@ export async function convertToSwitchKey(keyId: string, operatorId: string): Pro
         ? Number.MAX_SAFE_INTEGER
         : activatedAt + Number(key.durationSec || 0);
 
-  const newCode = buildLicenseCode(remainExpire, key.bound === 1, key.unbindMax, false);
+  const product: LicenseProduct = key.product === 'game' ? 'game' : 'formal';
+  const newCode = buildLicenseCode(remainExpire, key.bound === 1, key.unbindMax, false, true, product);
   if (!newCode) throw new ApiError('换机码签发失败：私钥未配置', 500);
 
   const newKey = await keyRepo().save(
     keyRepo().create({
       code: newCode,
       codeFp: codeFingerprint(newCode),
+      product,
       type: 2,
       durationSec: '0',
       expireAt: String(remainExpire),

@@ -8,6 +8,9 @@ export class KeyBatch {
   @Column({ length: 64 })
   name!: string;
 
+  @Column({ type: 'varchar', length: 16, default: 'formal', comment: '产品线：formal=正式版 game=游戏版' })
+  product!: string;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   remark!: string | null;
 

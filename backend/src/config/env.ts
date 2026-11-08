@@ -45,9 +45,12 @@ export const env = {
   jwtSecret,
   jwtExpires: process.env.JWT_EXPIRES || '7d',
 
-  // ECDSA P-256 私钥标量 d（hex，64 字符）。必须与 eBox 客户端内置公钥配对！
+  // ECDSA P-256 私钥标量 d（hex，64 字符）。必须与客户端内置公钥配对！
+  // 正式版：优先 LICENSE_PRIVATE_KEY_D_FORMAL，兼容旧名 LICENSE_PRIVATE_KEY_D（过渡期不破坏线上）
+  // 游戏版：LICENSE_PRIVATE_KEY_D_GAME（仅后端 .env/.env.local 持有，禁止入库）
   // 生成方式：npm run gen:key 查看/回填
-  privateKeyD: process.env.LICENSE_PRIVATE_KEY_D || '',
+  privateKeyD: process.env.LICENSE_PRIVATE_KEY_D_FORMAL || process.env.LICENSE_PRIVATE_KEY_D || '',
+  gamePrivateKeyD: process.env.LICENSE_PRIVATE_KEY_D_GAME || '',
 
   // 默认配置
   heartbeatIntervalHours: parseInt(process.env.HEARTBEAT_INTERVAL_HOURS || '6', 10),

@@ -8,6 +8,15 @@
       class="panel-alert"
     />
 
+    <div class="section-title">发布位</div>
+    <el-radio-group v-model="product" style="margin-bottom: 8px" @change="load">
+      <el-radio-button label="formal">正式版（v4.x）</el-radio-button>
+      <el-radio-button label="game">游戏版（v5.x）</el-radio-button>
+    </el-radio-group>
+    <div class="field-tip">
+      两个发布位完全独立：正式版对应 update.json / eBox.exe，游戏版对应 update-game.json / eBoxGame.exe。
+    </div>
+
     <div class="section-title">当前安装包</div>
     <div v-if="form.release_file_url" class="pkg-card">
       <div class="pkg-name">{{ form.release_file_name || form.release_file_url }}</div>
@@ -90,6 +99,8 @@ const loading = ref(false)
 const saving = ref(false)
 const uploading = ref(false)
 const changelogText = ref('')
+// 发布位：formal=正式版，game=游戏版（数据完全隔离）
+const product = ref<'formal' | 'game'>('formal')
 
 const form = reactive<ReleaseConfig>({
   release_version: '',
@@ -120,7 +131,7 @@ function fill(data: ReleaseConfig) {
 async function load() {
   loading.value = true
   try {
-    fill(await getReleaseConfig())
+    fill(await getReleaseConfig(product.value))
   } finally {
     loading.value = false
   }
@@ -131,6 +142,7 @@ async function save() {
   try {
     const changelog = changelogText.value.split('\n').map((s) => s.trim()).filter(Boolean)
     const data = await saveReleaseConfig({
+      product: product.value,
       release_version: form.release_version,
       release_date: form.release_date,
       release_changelog: JSON.stringify(changelog),
@@ -147,7 +159,7 @@ async function save() {
 async function doUpload(opt: UploadRequestOptions) {
   uploading.value = true
   try {
-    const data = await uploadReleaseFile(opt.file as File)
+    const data = await uploadReleaseFile(opt.file as File, product.value)
     fill(data)
     ElMessage.success('安装包已上传')
   } catch {

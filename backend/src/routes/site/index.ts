@@ -220,8 +220,9 @@ router.get('/contacts', async (_req, res) => {
 });
 
 /** 最新版本 + 下载地址（含网盘 / 镜像） */
-router.get('/latest-release', async (_req, res) => {
-  const data = await getLatestRelease();
+router.get('/latest-release', async (req, res) => {
+  // 产品线：?product=game 取游戏版发布位，缺省为正式版（老调用方零影响）
+  const data = await getLatestRelease(req.query.product === 'game' ? 'game' : 'formal');
   if (!data) return fail(res, '版本信息暂不可用', 1003);
   res.set('Cache-Control', 'public, max-age=60');
   ok(res, data);
