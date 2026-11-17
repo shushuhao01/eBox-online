@@ -154,18 +154,8 @@ router.get('/', async (req, res) => {
     // 身份：个人普通 / 个人高级 / 企业普通 / 企业高级（取当前生效卡密的 tier × level）
     const identityMap = new Map<string, { tier: number; level: number }>();
     if (ids.length) {
-      // 客户端版本：优先账号设备上报（客户端登录/心跳写入），回退卡密设备心跳
-      const acctDevices = await AppDataSource.getRepository(AccountDevice)
-        .createQueryBuilder('ad')
-        .where('ad.accountId IN (:...ids)', { ids })
-        .andWhere('ad.appVersion IS NOT NULL')
-        .orderBy('ad.lastActiveAt', 'DESC')
-        .getMany();
-      for (const d of acctDevices) {
-        const aid = String(d.accountId || '');
-        if (aid && d.appVersion && !versionMap.has(aid)) versionMap.set(aid, d.appVersion);
-      }
-
+      // 客户端版本：优先卡密设备心跳上报（真实运行版本的唯一可信来源），
+      // 再回退账号设备（客户端登录时写入；老版本客户端此处可能上报错误版本）
       const devices = await AppDataSource.getRepository(Device)
         .createQueryBuilder('d')
         .where('d.accountId IN (:...ids)', { ids })
@@ -173,6 +163,17 @@ router.get('/', async (req, res) => {
         .orderBy('d.lastHeartbeatAt', 'DESC')
         .getMany();
       for (const d of devices) {
+        const aid = String(d.accountId || '');
+        if (aid && d.appVersion && !versionMap.has(aid)) versionMap.set(aid, d.appVersion);
+      }
+
+      const acctDevices = await AppDataSource.getRepository(AccountDevice)
+        .createQueryBuilder('ad')
+        .where('ad.accountId IN (:...ids)', { ids })
+        .andWhere('ad.appVersion IS NOT NULL')
+        .orderBy('ad.lastActiveAt', 'DESC')
+        .getMany();
+      for (const d of acctDevices) {
         const aid = String(d.accountId || '');
         if (aid && d.appVersion && !versionMap.has(aid)) versionMap.set(aid, d.appVersion);
       }
