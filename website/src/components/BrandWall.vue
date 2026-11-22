@@ -78,6 +78,7 @@ const brandGroups = [
       { file: 'dingtalk.png', name: '钉钉' },
       { file: 'feishu.png', name: '飞书' },
       { file: 'douyin.png', name: '抖音' },
+      { file: 'live-companion.png', name: '直播伴侣' },
       { file: 'doubao.png', name: '豆包' },
       { file: 'capcut.png', name: '剪映' },
       { file: 'kook.png', name: 'KOOK' },
