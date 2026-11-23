@@ -15,6 +15,7 @@
     "seed:articles": "ts-node src/scripts/seed-articles.ts",
     "verify:permanent": "ts-node src/scripts/verify-permanent-keys.ts",
     "fix:permanent-keys": "ts-node src/scripts/fix-permanent-swap-keys.ts",
+    "fix:bound-keys": "ts-node src/scripts/fix-bound-unactivated-keys.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

@@ -338,10 +338,13 @@ export async function activateForAccount(account: Account, input: ActivateAccoun
   if (activated.revoked) throw new ApiError('该卡密已作废', 1004);
   if (activated.expired) throw new ApiError('该卡密已过期', 1004);
   if (activated.exceeded) throw new ApiError('该卡密已在其他设备使用，请先解绑', 1011);
-  if (legacyRegistered) {
-    // clientActivate 已把新登记的行走成“已激活”，同步回内存实例，
-    // 避免下面的 save 用登记时的 status=0 覆盖回去
-    key.status = 1;
+  // clientActivate 内部是独立加载实例、置为“已激活”后保存；
+  // 这里必须回读最新状态，否则下面的 save 会用激活前加载的 status=0 / used_at=NULL
+  // 覆盖回去，出现「账号已绑定、卡密有到期时间，但权益与后台都显示未激活」。
+  const activatedKey = await keyRepo().findOneBy({ id: key.id });
+  if (activatedKey) {
+    key.status = activatedKey.status;
+    key.usedAt = activatedKey.usedAt;
   }
 
   // 覆盖升级：旧卡置为“已覆盖失效”并保留 replaced_by（预约升级不失效旧卡，到期后自动切换）
