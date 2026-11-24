@@ -85,7 +85,7 @@ router.post('/keys/generate', superAdminRequired, async (req, res) => {
 });
 
 // GET /api/admin/keys  分页+筛选+搜索
-router.get('/keys', async (req, res) => {
+router.get('/keys', superAdminRequired, async (req, res) => {
   const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
   const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || '20'), 10) || 20));
   const qb = keyRepo()
@@ -226,7 +226,7 @@ router.post('/keys/verify', async (req, res) => {
 });
 
 // GET /api/admin/keys/export  导出 CSV（筛选条件与列表一致）
-router.get('/keys/export', async (req, res) => {
+router.get('/keys/export', superAdminRequired, async (req, res) => {
   const qb = keyRepo()
     .createQueryBuilder('k')
     .leftJoin(Customer, 'c', 'c.id = k.customer_id')
@@ -443,7 +443,7 @@ router.delete('/keys/:id', superAdminRequired, async (req, res) => {
 });
 
 // GET /api/admin/keys/:id  详情（含设备、绑定账号、企业、换机次数）
-router.get('/keys/:id', async (req, res) => {
+router.get('/keys/:id', superAdminRequired, async (req, res) => {
   const key = await keyRepo().findOneBy({ id: req.params.id });
   if (!key) return fail(res, '激活码不存在', 1002);
   const devices = await AppDataSource.getRepository(Device).find({ where: { keyId: key.id }, order: { lastOnlineAt: 'DESC' } });

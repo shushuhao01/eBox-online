@@ -216,7 +216,7 @@ export async function clientActivate(
   const activeDevices = await deviceRepo().findBy({ keyId: key.id, status: 1 });
   const existing = activeDevices.find((d) => d.machineFp === machineFp);
   if (key.bound === 1 && !existing && activeDevices.length >= 1) {
-    return { ...unregisteredActivate(key), exceeded: true, online: true };
+    return { ...unregisteredActivate(key), exceeded: true, online: true, graceUntil: 0 };
   }
 
   // 登记/更新设备
@@ -353,10 +353,40 @@ export async function clientHeartbeat(
   }
 
   // 更新设备在线状态（若该设备存在）
-  const device = await deviceRepo().findOneBy({ keyId: key.id, machineFp });
+  let device = await deviceRepo().findOneBy({ keyId: key.id, machineFp });
+  if (!device && key.bound === 1) {
+    // 历史数据兜底：Device 表上线前激活的老码可能没有任何设备登记。
+    // 仅当该码完全没有任何设备记录时，把首次心跳作为唯一绑定设备补登记，
+    // 避免老用户被误判为“未绑定设备”直接锁死；只要已有设备记录，未知设备仍拒绝。
+    const registered = await deviceRepo().countBy({ keyId: key.id });
+    if (registered === 0) {
+      device = await deviceRepo().save(
+        deviceRepo().create({
+          keyId: key.id,
+          machineFp,
+          status: 1,
+          firstActivateAt: new Date(),
+          lastOnlineAt: new Date(),
+          lastHeartbeatAt: new Date(),
+          lastIp: opts.ip || null,
+          appVersion: opts.appVersion || null,
+        })
+      );
+    }
+  }
+  if (!device && key.bound === 1) {
+    // 绑定码心跳必须来自已激活并完成绑定的设备，否则任意机器仅凭卡密文本即可白嫖授权
+    await hbRepo().save(hbRepo().create({ keyId: key.id, action: 2, clientTime: String(opts.clientTime || serverTime), ip: opts.ip || null, appVersion: opts.appVersion || null, detail: '心跳来自未绑定设备，本机授权已锁定' }));
+    return { status: 'kicked', online: true, graceUntil: 0, serverTime };
+  }
   if (device) {
     if (device.status === 2) {
       await hbRepo().save(hbRepo().create({ keyId: key.id, deviceId: device.id, action: 2, clientTime: String(opts.clientTime || serverTime), ip: opts.ip || null, appVersion: opts.appVersion || null, detail: '心跳检测到激活码被其他设备强制下线，本机授权已锁定' }));
+      return { status: 'kicked', online: true, graceUntil: 0, serverTime };
+    }
+    if (device.status === 0) {
+      // 已解绑/已换机的设备不再续期
+      await hbRepo().save(hbRepo().create({ keyId: key.id, deviceId: device.id, action: 2, clientTime: String(opts.clientTime || serverTime), ip: opts.ip || null, appVersion: opts.appVersion || null, detail: '心跳检测到设备已解绑，本机授权已锁定' }));
       return { status: 'kicked', online: true, graceUntil: 0, serverTime };
     }
     device.lastOnlineAt = new Date();
@@ -459,6 +489,13 @@ export async function clientUnbind(
 
   // 计算剩余到期（服务端视角）：锚定激活码首次激活时间，跨设备/重复激活不重置
   const device = await deviceRepo().findOneBy({ keyId: key.id, machineFp });
+  // 解绑必须由该卡密当前绑定的设备发起，避免仅凭卡密文本就踢掉原设备并换发新码
+  if (device) {
+    if (device.status !== 1) throw new ApiError('该设备当前不在绑定状态，无法解绑', 1004);
+  } else {
+    const activeDevice = await deviceRepo().findOneBy({ keyId: key.id, status: 1 });
+    if (activeDevice) throw new ApiError('当前设备未绑定该激活码，无法解绑', 1004);
+  }
   const activatedAt = key.usedAt
     ? Math.floor(key.usedAt.getTime() / 1000)
     : device?.firstActivateAt

@@ -69,7 +69,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { getTrend, getDistribution, type Distribution, type Trend } from '@/api/stats'
-import { initChart, disposeChart, PALETTE, AXIS_TEXT } from '@/utils/echarts'
+import { initChart, disposeChart, PALETTE, AXIS_TEXT, isGameVersion, EDITION_COLORS, verticalGradient } from '@/utils/echarts'
 
 const days = ref(30)
 const loading = ref(false)
@@ -223,9 +223,32 @@ function renderVersion(d: Distribution) {
     if (b[0] === '未上报') return -1
     return b[0].localeCompare(a[0], undefined, { numeric: true })
   })
+  const isGame = entries.map(([name]) => isGameVersion(name))
   versionChart = initChart(versionRef.value, {
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: 40, right: 20, top: 30, bottom: 30 },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: unknown) => {
+        const list = (Array.isArray(params) ? params : [params]) as Array<{
+          axisValue: string
+          seriesName: string
+          value: number
+          marker: string
+        }>
+        const hit = list.find((it) => Number(it.value) > 0) || list[0]
+        if (!hit) return ''
+        return `${hit.axisValue}<br/>${hit.marker}${hit.seriesName}：${hit.value} 台`
+      },
+    },
+    legend: {
+      top: 0,
+      right: 0,
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: { color: AXIS_TEXT, fontSize: 12 },
+      data: ['正式版', '游戏版'],
+    },
+    grid: { left: 40, right: 20, top: 44, bottom: 30 },
     xAxis: {
       type: 'category',
       data: entries.map(([name]) => name),
@@ -239,21 +262,21 @@ function renderVersion(d: Distribution) {
     },
     series: [
       {
-        name: '设备数',
+        name: '正式版',
         type: 'bar',
-        data: entries.map(([, value]) => value),
+        color: EDITION_COLORS.formal[0],
         barMaxWidth: 42,
-        itemStyle: {
-          color: {
-            type: 'linear',
-            x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: '#22C55E' },
-              { offset: 1, color: '#86EFAC' },
-            ],
-          },
-          borderRadius: [4, 4, 0, 0],
-        },
+        barGap: '-100%',
+        itemStyle: { color: verticalGradient(...EDITION_COLORS.formal), borderRadius: [4, 4, 0, 0] },
+        data: entries.map(([, value], i) => (isGame[i] ? 0 : value)),
+      },
+      {
+        name: '游戏版',
+        type: 'bar',
+        color: EDITION_COLORS.game[0],
+        barMaxWidth: 42,
+        itemStyle: { color: verticalGradient(...EDITION_COLORS.game), borderRadius: [4, 4, 0, 0] },
+        data: entries.map(([, value], i) => (isGame[i] ? value : 0)),
       },
     ],
   })

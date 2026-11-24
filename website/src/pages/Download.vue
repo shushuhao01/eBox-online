@@ -2,12 +2,34 @@
   <div class="download">
     <section class="page-hero">
       <div class="container">
-        <h1 class="page-title">{{ isGame ? '游戏版下载' : '下载中心' }}</h1>
+        <h1 class="page-title">{{ routeProduct === 'game' ? '游戏版下载' : '下载中心' }}</h1>
         <p class="page-sub">
           获取 {{ siteName }}{{ isGame ? ' 游戏版' : '' }}最新版本安装包。若主下载地址较慢，可尝试下方的备用地址。
         </p>
+        <div v-if="showTabs" class="version-tabs" role="tablist" aria-label="选择版本">
+          <button
+            type="button"
+            class="version-tab"
+            :class="{ active: activeProduct === 'formal' }"
+            role="tab"
+            :aria-selected="activeProduct === 'formal'"
+            @click="activeProduct = 'formal'"
+          >
+            正式版
+          </button>
+          <button
+            type="button"
+            class="version-tab"
+            :class="{ active: activeProduct === 'game' }"
+            role="tab"
+            :aria-selected="activeProduct === 'game'"
+            @click="activeProduct = 'game'"
+          >
+            游戏版
+          </button>
+        </div>
         <div v-if="release" class="version-line">
-          <span class="version-badge">v{{ release.latestVersion }}</span>
+          <span class="version-badge">{{ release.latestVersion }}</span>
           <span v-if="release.releaseDate" class="version-meta">更新于 {{ formatDate(release.releaseDate) }}</span>
         </div>
       </div>
@@ -25,7 +47,7 @@
         <template v-else>
           <div class="main-card">
             <div class="main-info">
-              <h2 class="main-title">{{ siteName }}{{ isGame ? ' 游戏版' : '' }} v{{ release.latestVersion }}</h2>
+              <h2 class="main-title">{{ siteName }}{{ isGame ? ' 游戏版' : '' }} {{ release.latestVersion }}</h2>
               <ul class="main-meta">
                 <li v-if="release.releaseDate">
                   <span>更新日期</span>{{ formatDate(release.releaseDate) }}
@@ -39,9 +61,9 @@
               </ul>
               <div class="main-actions">
                 <a
-                  v-if="release.downloadUrl"
+                  v-if="downloadUrl"
                   class="btn btn-primary btn-lg"
-                  :href="release.downloadUrl"
+                  :href="downloadUrl"
                   :download="release.downloadFileName || undefined"
                   target="_blank"
                   rel="noopener"
@@ -63,9 +85,14 @@
           </div>
 
           <div class="version-switch">
-            <span class="text-3">切换版本：</span>
-            <RouterLink v-if="isGame" class="inline-link" to="/download">正式版下载</RouterLink>
-            <RouterLink v-else class="inline-link" to="/game">游戏版下载</RouterLink>
+            <template v-if="!showTabs && hasOtherProduct">
+              <span class="text-3">切换版本：</span>
+              <RouterLink v-if="isGame" class="inline-link" to="/download">正式版下载</RouterLink>
+              <RouterLink v-else class="inline-link" to="/game">游戏版下载</RouterLink>
+            </template>
+            <RouterLink class="inline-link" to="/game-intro">
+              {{ isGame ? '游戏版介绍' : '了解游戏版' }}
+            </RouterLink>
           </div>
 
           <div v-if="release.mirrors.length" class="mirrors">
@@ -75,7 +102,7 @@
               <div v-for="m in release.mirrors" :key="m.id" class="card mirror-card">
                 <a
                   class="mirror-main"
-                  :href="m.url"
+                  :href="safeUrl(m.url)"
                   target="_blank"
                   rel="noopener"
                   @click="onDownload"
@@ -135,27 +162,56 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getLatestRelease, track, type LatestRelease } from '@/api'
 import { useSite } from '@/composables/useSite'
 import { usePageHead } from '@/composables/usePageHead'
+import { safeUrl } from '@/utils/safeHtml'
 
 // 产品线由路由 meta 决定：/download=正式版，/game=游戏版（独立发布位）
 const route = useRoute()
-const isGame = route.meta.product === 'game'
-const product: 'formal' | 'game' = isGame ? 'game' : 'formal'
+const routeProduct: 'formal' | 'game' = route.meta.product === 'game' ? 'game' : 'formal'
 
 const { siteName } = useSite()
 usePageHead(
-  isGame ? '游戏版下载' : '下载中心',
-  isGame
+  routeProduct === 'game' ? '游戏版下载' : '下载中心',
+  routeProduct === 'game'
     ? '下载 eBox 游戏版最新版本安装包，提供直链、镜像与网盘等多种下载地址。'
     : '下载 eBox 最新版本安装包，提供直链、镜像与网盘等多种下载地址。'
 )
 
-const release = ref<LatestRelease | null>(null)
+// 同时加载正式版与游戏版发布位，两者都配置时在页面顶部用 tab 切换
+const releases = ref<Record<'formal' | 'game', LatestRelease | null>>({ formal: null, game: null })
+const activeProduct = ref<'formal' | 'game'>(routeProduct)
 const loading = ref(true)
+
+const availableProducts = computed(() =>
+  (['formal', 'game'] as const).filter((p) => !!releases.value[p]?.latestVersion)
+)
+// 只有一个版本时保持原有单版本展示，不出现 tab
+const showTabs = computed(() => availableProducts.value.length > 1)
+// 当前激活版本无配置时，自动落到有配置的版本
+const effectiveProduct = computed<'formal' | 'game'>(() => {
+  if (releases.value[activeProduct.value]?.latestVersion) return activeProduct.value
+  return availableProducts.value[0] || activeProduct.value
+})
+const release = computed<LatestRelease | null>(() => releases.value[effectiveProduct.value])
+/** 下载地址只允许常规协议，阻断后台误填的 javascript: 等链接 */
+const downloadUrl = computed(() => safeUrl(release.value?.downloadUrl))
+const isGame = computed(() => effectiveProduct.value === 'game')
+// 另一条产品线是否已配置（未配置时不显示底部切换链接，避免跳到空页面）
+const hasOtherProduct = computed(() =>
+  availableProducts.value.includes(isGame.value ? 'formal' : 'game')
+)
+
+// /download 与 /game 复用同一组件，路由切换时同步激活版本
+watch(
+  () => route.meta.product,
+  (p) => {
+    activeProduct.value = p === 'game' ? 'game' : 'formal'
+  }
+)
 
 function typeLabel(type: string) {
   switch (type) {
@@ -234,10 +290,14 @@ async function copyCred(key: string, value: string | null) {
 
 onMounted(async () => {
   try {
-    const data = await getLatestRelease(product)
-    release.value = data && data.latestVersion ? data : null
-  } catch {
-    release.value = null
+    const [formal, game] = await Promise.all([
+      getLatestRelease('formal').catch(() => null),
+      getLatestRelease('game').catch(() => null),
+    ])
+    releases.value = {
+      formal: formal && formal.latestVersion ? formal : null,
+      game: game && game.latestVersion ? game : null,
+    }
   } finally {
     loading.value = false
   }
@@ -248,6 +308,38 @@ onMounted(async () => {
 .version-switch {
   margin: 20px 0 8px;
   font-size: 14px;
+}
+
+.version-tabs {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 22px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.version-tab {
+  padding: 8px 28px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.version-tab:hover {
+  color: var(--primary-color);
+}
+
+.version-tab.active {
+  background: var(--primary-color);
+  color: #fff;
 }
 
 .page-hero {

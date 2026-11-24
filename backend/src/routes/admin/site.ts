@@ -36,6 +36,7 @@ import {
   buildShortUrl,
 } from '../../services/ChannelService';
 import QRCode from 'qrcode';
+import sanitize from 'sanitize-html';
 import { notifyVersionUpgrade } from '../../services/NotifyService';
 
 const router = Router();
@@ -85,28 +86,43 @@ function normalizeChangelog(v: unknown): string {
   return JSON.stringify(s.split('\n').map((x) => x.trim()).filter(Boolean));
 }
 
-/** 基础 SVG 清洗：移除脚本与事件、外链嵌入等危险内容 */
+/** 基础 SVG 清洗：移除脚本、事件、动画与危险协议（另由 /api/uploads 的 CSP 兜底） */
 function sanitizeSvg(svg: string): string {
   return svg
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
-    .replace(/<(iframe|embed|object)[\s\S]*?<\/\1>/gi, '')
-    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/<(iframe|embed|object|animate|animateTransform|set|handler)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(iframe|embed|object|animate|animateTransform|set|handler)\b[^>]*>/gi, '')
+    // 事件属性可能以空白或 "/" 结尾的前缀出现（如 <svg/onload=...>）
+    .replace(/[\s/]on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|xlink:href)\s*=\s*("|')?\s*(javascript|vbscript|data:text\/html)[^"'\s>]*("|')?/gi, '')
     .replace(/javascript:/gi, '');
 }
 
-/** 富文本基础清洗：保留排版标签，移除脚本 / 事件 / 危险协议 */
+/** 富文本清洗：白名单标签 + 白名单属性，移除脚本 / 事件 / 危险协议 */
+const RICH_ALLOWED_TAGS = [
+  'a', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'p', 'br', 'div', 'span',
+  'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre',
+  'code', 'img', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'hr',
+  'font', 'sub', 'sup', 'figure', 'figcaption',
+];
+
 function sanitizeHtml(html: string): string {
   if (!html) return '';
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
-    .replace(/<(iframe|embed|object|form)[^>]*>/gi, '')
-    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/javascript:/gi, '')
-    .replace(/<img\b[^>]*\bsrc\s*=\s*("data:[^"]*"|'data:[^']*')[^>]*>/gi, '')
-    .replace(/<a\s+([^>]*?)href\s*=\s*("javascript:[^"]*"|'javascript:[^']*')/gi, '<a $1href="#"');
+  return sanitize(html, {
+    allowedTags: RICH_ALLOWED_TAGS,
+    allowedAttributes: {
+      a: ['href', 'target', 'rel'],
+      img: ['src', 'alt', 'width', 'height'],
+      td: ['colspan', 'rowspan'],
+      th: ['colspan', 'rowspan'],
+      '*': ['class', 'style', 'title'],
+    },
+    allowedSchemes: ['http', 'https', 'mailto', 'tel'],
+    allowedSchemesByTag: { img: ['http', 'https', 'data'] },
+    allowProtocolRelative: false,
+    disallowedTagsMode: 'discard',
+  });
 }
 
 function parseJsonArray(v: unknown): string | null {
@@ -128,6 +144,9 @@ function parseJsonArray(v: unknown): string | null {
 
 // ==================== 站点设置 ====================
 
+/** 仅超级管理员可修改的站点设置（可向全站注入脚本等高风险项） */
+const SITE_SUPER_ONLY_KEYS = new Set(['statistics_code']);
+
 router.get('/settings', async (_req, res) => {
   const settings = await getSiteSettings();
   ok(res, settings);
@@ -139,6 +158,8 @@ router.put('/settings', async (req, res) => {
   const patch: Record<string, string> = {};
   for (const [k, v] of Object.entries(body)) {
     if (k === 'access_password') continue; // 口令走安全接口
+    // 统计脚本会原样注入官网，仅允许超管修改
+    if (SITE_SUPER_ONLY_KEYS.has(k) && req.auth!.role !== 1) continue;
     patch[k] = v === null || v === undefined ? '' : String(v);
   }
   await setSiteSettings(patch);
@@ -176,21 +197,35 @@ router.post('/doc/push', async (req, res) => {
 
 router.get('/security', async (_req, res) => {
   const all = await getSiteSettings();
+  // 不回显明文口令，只告知是否已设置
   ok(res, {
     maintenance_mode: all.maintenance_mode || '0',
-    access_password: all.access_password || '',
+    access_password_set: all.access_password ? '1' : '0',
   });
 });
 
 router.put('/security', async (req, res) => {
   const { error, value } = Joi.object({
     maintenance_mode: Joi.string().valid('0', '1').default('0'),
-    access_password: Joi.string().allow('').max(64).default(''),
+    // 留空表示不修改；需要清除时置 access_password_clear=true
+    access_password: Joi.string().allow('').max(64),
+    access_password_clear: Joi.boolean().default(false),
   }).validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
-  await setSiteSettings(value as Record<string, string>);
-  await writeOperationLog(req.auth!.userId, '官网-更新安全策略', 'site_security', `维护模式=${(value as { maintenance_mode: string }).maintenance_mode}`, clientIp(req));
-  ok(res, value);
+  const current = await getSiteSettings();
+  const patch: Record<string, string> = { maintenance_mode: value.maintenance_mode };
+  if (value.access_password_clear) patch.access_password = '';
+  else if (value.access_password) patch.access_password = value.access_password;
+  await setSiteSettings(patch);
+  await writeOperationLog(req.auth!.userId, '官网-更新安全策略', 'site_security', `维护模式=${value.maintenance_mode}`, clientIp(req));
+  ok(res, {
+    maintenance_mode: value.maintenance_mode,
+    access_password_set: (patch.access_password !== undefined
+      ? !!patch.access_password
+      : !!current.access_password)
+      ? '1'
+      : '0',
+  });
 });
 
 // ==================== SEO 主动推送 ====================
@@ -251,7 +286,8 @@ router.post('/articles', async (req, res) => {
   const exists = await articleRepo().findOneBy({ slug });
   if (exists) return fail(res, 'slug 已存在，请更换', 400);
 
-  const content = v.contentType === 'html' ? sanitizeHtml(String(v.content || '')) : String(v.content || '');
+  // 无论 html / md 都按白名单清洗，避免内容类型切换绕过 XSS 过滤
+  const content = sanitizeHtml(String(v.content || ''));
   const row = await articleRepo().save(
     articleRepo().create({
       slug,
@@ -300,7 +336,7 @@ router.put('/articles/:id', async (req, res) => {
   if (b.cover !== undefined) row.cover = (b.cover as string) || null;
   if (b.summary !== undefined) row.summary = (b.summary as string) || null;
   if (b.contentType !== undefined) row.contentType = String(b.contentType);
-  if (b.content !== undefined) row.content = row.contentType === 'html' ? sanitizeHtml(String(b.content)) : String(b.content);
+  if (b.content !== undefined) row.content = sanitizeHtml(String(b.content));
   if (b.status !== undefined) row.status = String(b.status);
   if (b.pinned !== undefined) row.pinned = Number(b.pinned) ? 1 : 0;
   if (b.publishAt !== undefined) row.publishAt = b.publishAt ? new Date(String(b.publishAt)) : null;

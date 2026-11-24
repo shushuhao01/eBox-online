@@ -61,7 +61,17 @@
         </el-table-column>
         <el-table-column label="客户端版本" width="110" align="center">
           <template #default="{ row }">
-            <span v-if="row.clientVersion" class="code-font">{{ row.clientVersion }}</span>
+            <div v-if="row.clientVersion" class="client-version">
+              <el-tag
+                v-if="row.clientProduct"
+                size="small"
+                :type="row.clientProduct === 'game' ? 'warning' : 'info'"
+                effect="plain"
+              >
+                {{ row.clientProduct === 'game' ? '游戏版' : '正式版' }}
+              </el-tag>
+              <span class="code-font">{{ row.clientVersion }}</span>
+            </div>
             <span v-else class="text-secondary">-</span>
           </template>
         </el-table-column>
@@ -95,7 +105,7 @@
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
             <el-button link type="primary" size="small" @click="handleUnlock(row)">解锁</el-button>
-            <el-button link type="warning" size="small" @click="handleReset(row)">重置密码</el-button>
+            <el-button link type="warning" size="small" v-if="userStore.isSuperAdmin" @click="handleReset(row)">重置密码</el-button>
             <el-button
               link
               :type="row.status === 2 ? 'success' : 'danger'"
@@ -350,11 +360,14 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, CopyDocument } from '@element-plus/icons-vue'
 import TimeCell from '@/components/TimeCell.vue'
+import { useUserStore } from '@/stores/user'
 import dayjs from 'dayjs'
 import {
   getAccounts, getAccountMetrics, getAccountDetail, unlockAccount, resetAccountPassword, setAccountStatus,
   type AccountItem, type AccountMetrics, type AccountDetail,
 } from '@/api/accounts'
+
+const userStore = useUserStore()
 
 const ROLE_TEXT: Record<number, string> = { 1: '个人', 2: '企业管理员', 3: '企业成员' }
 /** 身份列：按当前生效卡密的 版本 × 等级 显示；无生效卡密时回退账号角色 */
@@ -535,6 +548,12 @@ onMounted(() => {
 .text-secondary {
   color: var(--text-secondary);
   font-size: 12px;
+}
+.client-version {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
 }
 .danger {
   color: var(--danger-color);

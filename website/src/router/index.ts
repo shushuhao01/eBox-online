@@ -6,6 +6,7 @@ import Pricing from '@/pages/Pricing.vue'
 import Cases from '@/pages/Cases.vue'
 import CaseDetail from '@/pages/CaseDetail.vue'
 import Download from '@/pages/Download.vue'
+import GameIntro from '@/pages/GameIntro.vue'
 import Articles from '@/pages/Articles.vue'
 import ArticleDetail from '@/pages/ArticleDetail.vue'
 import Docs from '@/pages/Docs.vue'
@@ -23,8 +24,10 @@ export const routes: RouteRecordRaw[] = [
   { path: '/cases', name: 'cases', component: Cases, meta: { title: '使用案例' } },
   { path: '/cases/:id', name: 'case-detail', component: CaseDetail, meta: { title: '案例详情' } },
   { path: '/download', name: 'download', component: Download, meta: { title: '下载' } },
+  // 游戏版专题页：介绍 / 卖点 / 与正式版对比 / 下载入口
+  { path: '/game-intro', name: 'game-intro', component: GameIntro, meta: { title: '游戏版' } },
   // 游戏版独立落地页：复用下载组件，按 meta.product 读取游戏版发布位
-  { path: '/game', name: 'game', component: Download, meta: { title: '游戏版', product: 'game' } },
+  { path: '/game', name: 'game', component: Download, meta: { title: '游戏版下载', product: 'game' } },
   { path: '/articles', name: 'articles', component: Articles, meta: { title: '文章中心' } },
   { path: '/articles/:slug', name: 'article-detail', component: ArticleDetail, meta: { title: '文章详情' } },
   { path: '/docs', name: 'docs', component: Docs, meta: { title: '文档中心' } },

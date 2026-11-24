@@ -10,7 +10,7 @@ import { IpAssignment } from '../../entities/account/IpAssignment';
 import { IpResource } from '../../entities/account/IpResource';
 import { LicenseKey } from '../../entities/LicenseKey';
 import { Device } from '../../entities/Device';
-import { ok, fail, clientIp } from '../../middleware/helpers';
+import { ok, fail, clientIp, superAdminRequired } from '../../middleware/helpers';
 import { ApiError } from '../../middleware/errorHandler';
 import { writeOperationLog } from '../../services/LogService';
 import { revokeAccountSessions } from '../../services/AccountService';
@@ -153,6 +153,8 @@ router.get('/', async (req, res) => {
     const planMap = new Map<string, string>();
     // 身份：个人普通 / 个人高级 / 企业普通 / 企业高级（取当前生效卡密的 tier × level）
     const identityMap = new Map<string, { tier: number; level: number }>();
+    // 客户端版本对应的产品线（取当前生效卡密，formal=正式版 game=游戏版）
+    const productMap = new Map<string, 'formal' | 'game'>();
     if (ids.length) {
       // 客户端版本：优先卡密设备心跳上报（真实运行版本的唯一可信来源），
       // 再回退账号设备（客户端登录时写入；老版本客户端此处可能上报错误版本）
@@ -230,7 +232,10 @@ router.get('/', async (req, res) => {
         const key = a.enterpriseId
           ? activeBy.get(String(a.enterpriseId))
           : activeBy.get(String(a.id));
-        if (key) identityMap.set(String(a.id), { tier: key.tier === 2 ? 2 : 1, level: key.level === 2 ? 2 : 1 });
+        if (key) {
+          identityMap.set(String(a.id), { tier: key.tier === 2 ? 2 : 1, level: key.level === 2 ? 2 : 1 });
+          productMap.set(String(a.id), key.product === 'game' ? 'game' : 'formal');
+        }
       }
     }
 
@@ -255,6 +260,7 @@ router.get('/', async (req, res) => {
           enterpriseCode: ent?.code || null,
           enterpriseName: ent?.name || null,
           clientVersion: versionMap.get(String(a.id)) || null,
+          clientProduct: productMap.get(String(a.id)) || null,
           keyPlan: planMap.get(String(a.id)) || null,
           // 身份：1=个人 2=企业 × 1=普通 2=高级（无生效卡密时为 null）
           tier: identityMap.get(String(a.id))?.tier ?? null,
@@ -489,7 +495,7 @@ router.post('/:id/unlock', async (req, res) => {
 });
 
 // POST /api/admin/accounts/:id/reset-password（生成一次性临时密码并吊销全部会话）
-router.post('/:id/reset-password', async (req, res) => {
+router.post('/:id/reset-password', superAdminRequired, async (req, res) => {
   try {
     const account = await findAccount(String(req.params.id));
     const password = generateTempPassword();

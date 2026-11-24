@@ -123,7 +123,7 @@ class SmtpConnection {
 
   /** 587 端口明文连接后升级 STARTTLS */
   async upgradeTls(host: string): Promise<void> {
-    const secureSocket = tls.connect({ socket: this.socket, servername: host, rejectUnauthorized: false });
+    const secureSocket = tls.connect({ socket: this.socket, servername: host, rejectUnauthorized: true });
     await new Promise<void>((resolve, reject) => {
       secureSocket.once('secureConnect', () => resolve());
       secureSocket.once('error', (e) => reject(e));
@@ -159,10 +159,19 @@ function dotStuff(body: string): string {
     .join('\r\n');
 }
 
+/** 邮件地址必须单行且不含尖括号，防止 SMTP 命令 / 邮件头注入 */
+function sanitizeAddress(value: string, label: string): string {
+  const addr = String(value || '').trim();
+  if (!addr || /[\r\n<>]/.test(addr)) throw new Error(`${label}地址非法`);
+  return addr;
+}
+
 /** 发送邮件（纯文本或 HTML）；任一环节失败抛错 */
 export async function sendMail(cfg: SmtpConfig, mail: MailMessage): Promise<void> {
+  const from = sanitizeAddress(cfg.from, '发件人');
+  const to = sanitizeAddress(mail.to, '收件人');
   const socket = cfg.secure
-    ? tls.connect({ host: cfg.host, port: cfg.port, servername: cfg.host, rejectUnauthorized: false })
+    ? tls.connect({ host: cfg.host, port: cfg.port, servername: cfg.host, rejectUnauthorized: true })
     : net.connect({ host: cfg.host, port: cfg.port });
   socket.setTimeout(25000, () => socket.destroy(new Error('SMTP 连接超时')));
 
@@ -196,14 +205,14 @@ export async function sendMail(cfg: SmtpConfig, mail: MailMessage): Promise<void
       await conn.command(Buffer.from(cfg.pass, 'utf8').toString('base64'), [235]);
     }
 
-    await conn.command(`MAIL FROM:<${cfg.from}>`, [250]);
-    await conn.command(`RCPT TO:<${mail.to}>`, [250, 251]);
+    await conn.command(`MAIL FROM:<${from}>`, [250]);
+    await conn.command(`RCPT TO:<${to}>`, [250, 251]);
     await conn.command('DATA', [354]);
 
     const html = !!mail.html;
     const headers = [
-      `From: ${encodeHeader(mail.fromName || 'eBox 授权服务')} <${cfg.from}>`,
-      `To: <${mail.to}>`,
+      `From: ${encodeHeader(mail.fromName || 'eBox 授权服务')} <${from}>`,
+      `To: <${to}>`,
       `Subject: ${encodeHeader(mail.subject)}`,
       `Date: ${new Date().toUTCString()}`,
       'MIME-Version: 1.0',

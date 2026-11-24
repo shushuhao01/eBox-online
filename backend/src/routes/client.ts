@@ -2,7 +2,7 @@ import { Router } from 'express';
 import Joi from 'joi';
 import { ok, fail, clientIp } from '../middleware/helpers';
 import { ApiError } from '../middleware/errorHandler';
-import { clientActivate, clientHeartbeat, clientUnbind, findByCode, keyWithDetail } from '../services/KeyService';
+import { clientActivate, clientHeartbeat, clientUnbind, findByCode } from '../services/KeyService';
 import { decodeAndVerify } from '../crypto/licenseCodec';
 import { getConfigValue } from '../services/ConfigService';
 import { getAgencyPayload } from '../services/AgencyService';
@@ -15,22 +15,28 @@ import { Device } from '../entities/Device';
 const router = Router();
 
 // 防重放：code+nonce 缓存 10 分钟（进程内 Map，足够单实例场景）
-const nonceCache = new Map<string, number>();
+// 同一设备 60 秒内重复提交视为网络重试（幂等放行）；其他设备或超窗复用一律按重放拒绝
+const NONCE_RETRY_MS = 60 * 1000;
+const nonceCache = new Map<string, { at: number; machineFp: string }>();
 setInterval(() => {
   const now = Date.now();
-  for (const [k, t] of nonceCache) {
-    if (now - t > 10 * 60 * 1000) nonceCache.delete(k);
+  for (const [k, v] of nonceCache) {
+    if (now - v.at > 10 * 60 * 1000) nonceCache.delete(k);
   }
 }, 5 * 60 * 1000).unref?.();
 
-function checkNonce(code: string, nonce: string, clientTime: number): boolean {
+function claimNonce(code: string, nonce: string, machineFp: string): boolean {
   const now = Date.now();
-  // 客户端时间偏差 > 5 分钟视为异常
-  if (Math.abs(now / 1000 - clientTime) > 300) return false;
   const key = `${code}|${nonce}`;
-  if (nonceCache.has(key)) return false;
-  nonceCache.set(key, now);
+  const prev = nonceCache.get(key);
+  if (prev) return prev.machineFp === machineFp && now - prev.at <= NONCE_RETRY_MS;
+  nonceCache.set(key, { at: now, machineFp });
   return true;
+}
+
+/** 客户端时间偏差 > 5 分钟视为异常 */
+function clockSkewOk(clientTime: number): boolean {
+  return Math.abs(Date.now() / 1000 - clientTime) <= 300;
 }
 
 const bodySchema = Joi.object({
@@ -52,8 +58,12 @@ router.post('/activate', async (req, res) => {
     const { error, value } = bodySchema.validate(req.body);
     if (error) return fail(res, `参数错误：${error.message}`, 400);
     const forceOnline = (await getConfigValue('force_online_activate')) === '1';
-    if (!checkNonce(value.code, value.nonce, value.timestamp)) {
-      if (forceOnline) return fail(res, '请求异常或已过期', 401);
+    // 重放一律拒绝；时钟偏差仅在强制在线激活时校验（老客户端系统时间不准也能激活）
+    if (!claimNonce(value.code, value.nonce, value.machineFp)) {
+      return fail(res, '请求异常或已过期', 401);
+    }
+    if (forceOnline && !clockSkewOk(value.timestamp)) {
+      return fail(res, '请求异常或已过期', 401);
     }
     const result = await clientActivate(value.code, value.machineFp, {
       ip: clientIp(req),
@@ -73,7 +83,7 @@ router.post('/heartbeat', async (req, res) => {
   try {
     const { error, value } = bodySchema.validate(req.body);
     if (error) return fail(res, `参数错误：${error.message}`, 400);
-    if (!checkNonce(value.code, value.nonce, value.timestamp)) return fail(res, '请求异常或已过期', 401);
+    if (!claimNonce(value.code, value.nonce, value.machineFp)) return fail(res, '请求异常或已过期', 401);
     const result = await clientHeartbeat(value.code, value.machineFp, {
       ip: clientIp(req),
       appVersion: value.appVersion,
@@ -144,7 +154,7 @@ router.post('/unbind', async (req, res) => {
   try {
     const { error, value } = bodySchema.validate(req.body);
     if (error) return fail(res, `参数错误：${error.message}`, 400);
-    if (!checkNonce(value.code, value.nonce, value.timestamp)) return fail(res, '请求异常或已过期', 401);
+    if (!claimNonce(value.code, value.nonce, value.machineFp)) return fail(res, '请求异常或已过期', 401);
     const result = await clientUnbind(value.code, value.machineFp, {
       ip: clientIp(req),
       appVersion: value.appVersion,
@@ -170,7 +180,7 @@ router.get('/status', async (req, res) => {
     if (!key) {
       return ok(res, { online: false, registered: false, serverTime });
     }
-    const detail = await keyWithDetail(key.id);
+    // 只返回客户端所需的授权字段，避免把整行卡密（批次/客户/备注/归属人等）暴露给匿名查询
     const device = await AppDataSource.getRepository(Device).findOneBy({ keyId: key.id, machineFp: fp });
     return ok(res, {
       online: true,
@@ -184,7 +194,6 @@ router.get('/status', async (req, res) => {
       usedAt: key.usedAt,
       deviceId: device?.id || null,
       serverTime,
-      detail,
     });
   } catch (e) {
     if (e instanceof ApiError) return fail(res, e.message, e.code);

@@ -214,13 +214,12 @@ async function openDetail(b: KeyBatch) {
 async function handleDelete(b: KeyBatch) {
   try {
     await ElMessageBox.confirm(
-      `确定删除批次 <b>${b.name}</b> 吗？<br/>该批次下 ${b.totalCount ?? 0} 个激活码<u>不会删除</u>，仅解除批次归属。`,
+      `确定删除批次「${b.name}」吗？该批次下 ${b.totalCount ?? 0} 个激活码不会删除，仅解除批次归属。`,
       '删除批次',
       {
         confirmButtonText: '确认删除',
         cancelButtonText: '取消',
         type: 'warning',
-        dangerouslyUseHTMLString: true,
         confirmButtonClass: 'el-button--danger',
       }
     )

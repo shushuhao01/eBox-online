@@ -13,7 +13,7 @@
             <RouterLink class="btn btn-ghost btn-lg" to="/pricing">查看定价</RouterLink>
           </div>
           <p v-if="release" class="hero-version">
-            最新版本 v{{ release.latestVersion }}
+            最新版本 {{ release.latestVersion }}
             <span v-if="release.releaseDate">· {{ formatDate(release.releaseDate) }}</span>
           </p>
         </div>
@@ -83,6 +83,25 @@
             <div class="feature-icon">{{ f.icon }}</div>
             <h3 class="feature-title">{{ f.title }}</h3>
             <p class="feature-desc">{{ f.desc }}</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 游戏版提示 -->
+    <section class="game-strip-wrap">
+      <div class="container">
+        <div class="game-strip">
+          <div class="game-strip-copy">
+            <h3 class="game-strip-title">需要游戏多开？可以选择游戏版</h3>
+            <p class="game-strip-desc">
+              游戏版包含正式版全部能力，并针对游戏场景再做增强：轻量隔离 + 内置虚拟机整机隔离，
+              多开更多、运行更稳、环境更隔绝。
+            </p>
+          </div>
+          <div class="game-strip-actions">
+            <RouterLink class="btn btn-primary" to="/game">前往游戏版下载</RouterLink>
+            <RouterLink class="game-strip-link" to="/game-intro">了解游戏版 →</RouterLink>
           </div>
         </div>
       </div>
@@ -681,6 +700,45 @@ onMounted(async () => {
   color: var(--text-3);
 }
 
+.game-strip-wrap {
+  padding-top: 12px;
+}
+
+.game-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 26px;
+  border: 1px solid #ffe2bd;
+  border-radius: 14px;
+  background: linear-gradient(120deg, #fff6ea 0%, #ffffff 70%);
+}
+
+.game-strip-title {
+  font-size: 18px;
+}
+
+.game-strip-desc {
+  margin-top: 8px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.game-strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-shrink: 0;
+}
+
+.game-strip-link {
+  color: #f59e0b;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
 .feature-card {
   padding: 26px 22px;
 }
@@ -925,6 +983,15 @@ onMounted(async () => {
   }
   .trust-inner {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .game-strip {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 20px;
+  }
+  .game-strip-actions {
+    flex-wrap: wrap;
+    gap: 12px;
   }
   .cta {
     flex-direction: column;

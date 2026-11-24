@@ -4,7 +4,7 @@
       <div class="container">
         <h1 class="page-title">定价方案</h1>
         <p class="page-sub">
-          从个人多开到团队协作，按需要选择版本；卡密绑定账号，换机、重装登录即可恢复权益。
+          从个人多开到团队协作，按需要选择版本。正式版为官方指导价；游戏版包含正式版全部能力，价格以商城商品页为准，可直接前往商城购买对应商品卡。
         </p>
       </div>
     </section>
@@ -14,7 +14,9 @@
         <div class="grid grid-3 plan-grid">
           <div v-for="plan in plans" :key="plan.name" class="card plan-card" :class="{ featured: plan.featured }">
             <span v-if="plan.featured" class="plan-badge">团队首选</span>
-            <h2 class="plan-name">{{ plan.name }}</h2>
+            <h2 class="plan-name">
+              {{ plan.name }}<span class="plan-edition">正式版</span>
+            </h2>
             <p class="plan-desc">{{ plan.desc }}</p>
             <div class="plan-price">
               <span class="plan-num">{{ plan.price }}</span>
@@ -48,8 +50,40 @@
           </div>
         </div>
         <p class="price-note">
-          以上为月卡价格，另有季卡、年卡与永久授权；实际价格与活动以商城商品页为准。
+          以上为正式版月卡价格，另有季卡、年卡与永久授权；实际价格与活动以商城商品页为准。
         </p>
+
+        <div class="card game-card">
+          <div class="game-card-body">
+            <h3 class="game-card-title">
+              游戏版<span class="plan-edition game">包含正式版全部能力</span>
+            </h3>
+            <p class="game-card-desc">
+              在正式版全部能力之上，针对游戏多开增强隔离与稳定性：轻量隔离 + 内置虚拟机整机隔离，
+              长时间挂机更稳，两类环境同样适用于非游戏程序。
+            </p>
+            <ul class="game-points">
+              <li>轻量隔离 + 内置虚拟机，多开更多、隔离更强</li>
+              <li>游戏场景优化，启动切换顺畅、长时间挂机更稳</li>
+              <li>独立更新通道，与正式版互不影响、可同时安装</li>
+            </ul>
+          </div>
+          <div class="game-card-actions">
+            <span class="plan-mall">价格以商城商品页为准</span>
+            <a
+              v-if="purchaseUrl"
+              class="btn btn-primary btn-lg"
+              :href="purchaseUrl"
+              target="_blank"
+              rel="noopener"
+              @click="track('buy')"
+            >
+              前往商城购买
+            </a>
+            <RouterLink v-else class="btn btn-primary btn-lg" to="/contact">联系购买</RouterLink>
+            <RouterLink class="game-learn" to="/game-intro">了解游戏版 →</RouterLink>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -160,8 +194,8 @@ import { entitlementRows, plans, pricingFaqs, seatPacks, upgradePacks } from '@/
 
 const { purchaseUrl } = useSite()
 usePageHead(
-  '定价方案_个人版与企业版',
-  'eBox 定价：普通版 9.9 元起，高级版 29.9 元/月，企业版 299.9 元起含 10 个席位；支持升级码与席位扩容码。',
+  '定价方案_正式版与游戏版',
+  'eBox 定价：正式版普通版 9.9 元起，高级版 29.9 元/月，企业版 299.9 元起含 10 个席位；游戏版包含正式版全部能力，价格以商城商品页为准，可直接前往商城购买。',
 )
 </script>
 
@@ -211,7 +245,92 @@ usePageHead(
   font-size: 12px;
 }
 
+.plan-edition {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--primary-light);
+  color: var(--primary-color);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.plan-edition.game {
+  background: #fff3e4;
+  color: #f59e0b;
+}
+
+.plan-mall {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f59e0b;
+}
+
+.game-card {
+  margin-top: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 36px;
+  padding: 30px 32px;
+  border-color: #ffe2bd;
+  background: linear-gradient(120deg, #fff8ef 0%, #ffffff 72%);
+}
+
+.game-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 22px;
+}
+
+.game-card-desc {
+  margin-top: 12px;
+  max-width: 720px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.game-points {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 26px;
+}
+
+.game-points li {
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.game-points li::before {
+  content: '✓';
+  margin-right: 6px;
+  color: #f59e0b;
+  font-weight: 700;
+}
+
+.game-card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.game-learn {
+  color: #f59e0b;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .plan-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   font-size: 22px;
 }
 
@@ -416,6 +535,14 @@ usePageHead(
   }
   .plan-desc {
     min-height: auto;
+  }
+  .game-card {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 24px 22px;
+  }
+  .game-card-actions {
+    align-items: flex-start;
   }
 }
 </style>

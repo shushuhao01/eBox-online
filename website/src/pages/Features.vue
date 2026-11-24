@@ -3,7 +3,78 @@
     <section class="page-hero">
       <div class="container">
         <h1 class="page-title">功能介绍</h1>
-        <p class="page-sub">{{ siteName }} 为需要在同一台电脑上运行多个应用实例的个人与团队设计：环境隔离让多开更稳定，账号体系让权益跨设备恢复，团队面板与独立 IP 让协作更有序。</p>
+        <p class="page-sub">{{ siteName }} 为需要在同一台电脑上运行多个应用实例的个人与团队设计：正式版覆盖办公、多账号运营与团队协作；游戏版包含正式版全部能力，并针对游戏多开增强隔离与稳定性。</p>
+      </div>
+    </section>
+
+    <!-- 版本能力 -->
+    <section class="section">
+      <div class="container">
+        <div class="section-head">
+          <h2 class="section-title">正式版与游戏版，能力一脉相承</h2>
+          <p class="section-sub">
+            两个版本独立发版、可同时安装。游戏版包含正式版全部能力，并针对游戏多开再做增强。
+          </p>
+        </div>
+
+        <div class="edition-grid">
+          <div class="card edition-card">
+            <div class="edition-head">
+              <span class="edition-tag">正式版</span>
+              <span class="edition-file">eBox.exe</span>
+            </div>
+            <h3 class="edition-title">办公、多账号运营与团队协作</h3>
+            <p class="edition-desc">日常办公与运营场景的标准版本，轻量环境隔离即可覆盖大多数需求。</p>
+            <ul class="edition-list">
+              <li>环境独立隔离，免虚拟机，资源占用低</li>
+              <li>免扫码自动登录，账号卡密跨设备恢复</li>
+              <li>团队面板、成员席位与独立 IP 资源池</li>
+              <li>系统状态看板、垃圾清理等内置工具</li>
+            </ul>
+            <div class="edition-actions">
+              <RouterLink class="btn btn-primary" to="/download">下载正式版</RouterLink>
+              <RouterLink class="btn btn-ghost" to="/pricing">查看定价</RouterLink>
+            </div>
+          </div>
+
+          <div class="card edition-card edition-game">
+            <div class="edition-head">
+              <span class="edition-tag">游戏版</span>
+              <span class="edition-file">eBoxGame.exe</span>
+            </div>
+            <h3 class="edition-title">正式版全部能力 + 游戏增强</h3>
+            <p class="edition-desc">面向游戏多开与账号分组运营，在正式版能力之上进一步强化。</p>
+            <ul class="edition-list">
+              <li>包含正式版全部能力，办公与团队功能同样可用</li>
+              <li>游戏场景优化：启动、切换更顺畅，长时间挂机更稳</li>
+              <li>轻量隔离 + 内置虚拟机，整机级隔离更强、更隔绝</li>
+              <li>独立更新通道，与正式版互不影响、可同时安装</li>
+            </ul>
+            <div class="edition-actions">
+              <RouterLink class="btn btn-primary" to="/game">下载游戏版</RouterLink>
+              <RouterLink class="btn btn-ghost" to="/game-intro">了解游戏版</RouterLink>
+            </div>
+          </div>
+        </div>
+
+        <div class="compare-wrap">
+          <table class="compare">
+            <thead>
+              <tr>
+                <th class="compare-item-col">能力对照</th>
+                <th>正式版</th>
+                <th class="highlight">游戏版</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in editionRows" :key="row.name">
+                <td class="compare-name">{{ row.name }}</td>
+                <td>{{ row.formal }}</td>
+                <td class="highlight">{{ row.game }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -69,8 +140,19 @@ import { usePageHead } from '@/composables/usePageHead'
 const { siteName } = useSite()
 usePageHead(
   '功能介绍',
-  '了解 eBox 的核心功能：环境隔离、账号权益同步、团队面板、成员席位、独立 IP 资源池、自动登录与可视化管理。',
+  '了解 eBox 正式版与游戏版的功能：环境隔离、账号权益同步、团队面板、成员席位、独立 IP 资源池；游戏版包含正式版全部能力，并增强游戏隔离与稳定性。',
 )
+
+// 正式版 / 游戏版能力对照
+const editionRows = [
+  { name: '环境隔离', formal: '轻量环境隔离', game: '轻量隔离 + 内置虚拟机，更强、更隔绝' },
+  { name: '游戏场景优化', formal: '—', game: '启动、切换更顺畅，长时间挂机更稳' },
+  { name: '账号与自动登录', formal: '支持', game: '同正式版，完整支持' },
+  { name: '团队面板与独立 IP', formal: '支持', game: '同正式版，完整支持' },
+  { name: '系统工具', formal: '状态看板、垃圾清理等', game: '同正式版，完整支持' },
+  { name: '更新通道', formal: '独立版本号与更新源', game: '独立版本号与更新源' },
+  { name: '安装包', formal: 'eBox.exe', game: 'eBoxGame.exe' },
+]
 
 const groups = [
   {
@@ -204,6 +286,126 @@ const steps = [
   font-size: 14px;
 }
 
+/* ---------- 版本能力 ---------- */
+.edition-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 22px;
+  margin-bottom: 32px;
+}
+
+.edition-card {
+  display: flex;
+  flex-direction: column;
+  padding: 28px 26px;
+}
+
+.edition-game {
+  border-color: #ffe2bd;
+  background: linear-gradient(160deg, #fff8ef 0%, #ffffff 62%);
+}
+
+.edition-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.edition-tag {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--primary-light);
+  color: var(--primary-color);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.edition-game .edition-tag {
+  background: #fff3e4;
+  color: #f59e0b;
+}
+
+.edition-file {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.edition-title {
+  margin-top: 16px;
+  font-size: 20px;
+}
+
+.edition-desc {
+  margin-top: 10px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.edition-list {
+  margin-top: 16px;
+  padding-left: 20px;
+  list-style: disc;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.edition-actions {
+  margin-top: auto;
+  padding-top: 24px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.compare-wrap {
+  overflow-x: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.compare {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+}
+
+.compare th,
+.compare td {
+  padding: 14px 18px;
+  text-align: left;
+  font-size: 15px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.compare thead th {
+  background: var(--bg-soft);
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.compare tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.compare-name {
+  color: var(--text-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.compare .highlight {
+  background: #fff7ec;
+  color: var(--text-1);
+  font-weight: 600;
+}
+
 .steps {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -256,6 +458,9 @@ const steps = [
 }
 
 @media (max-width: 900px) {
+  .edition-grid {
+    grid-template-columns: 1fr;
+  }
   .steps {
     grid-template-columns: repeat(2, 1fr);
   }

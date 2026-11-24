@@ -40,6 +40,8 @@ export interface ClientConfigView {
   manualUrl: string;
   /** 使用手册标题（官网管理-使用手册），客户端仅作展示备用 */
   manualTitle: string;
+  /** 游戏版专题页链接：正式版客户端顶部/设置页「游戏版」入口跳转；空=不展示入口 */
+  gameEditionUrl: string;
   tiers: ClientTierView[];
 }
 
@@ -97,6 +99,11 @@ export async function getClientOtherBuyUrl(): Promise<string> {
   return getConfigValue('client_other_buy_url', '');
 }
 
+/** 游戏版专题页链接（正式版客户端入口跳转，空=不展示入口） */
+export async function getGameEditionUrl(): Promise<string> {
+  return getConfigValue('game_edition_url', '');
+}
+
 /** 线上故障放行开关（C-5）：默认关闭，仅运维临时打开 */
 export async function getAllowOfflineFirstBind(): Promise<boolean> {
   const raw = await getConfigValue('allow_offline_first_bind', '0');
@@ -110,11 +117,12 @@ function parsePositive(raw: string, fallback: number): number {
 
 /** 客户端配置整包（/api/config/client 与 SSE config 事件同构） */
 export async function buildClientConfig(): Promise<ClientConfigView> {
-  const [links, seatAddonMallUrl, buyUrl, otherBuyUrl, allowOfflineFirstBind, disclaimerRaw, ipVersionRaw, configVersionRaw, site] = await Promise.all([
+  const [links, seatAddonMallUrl, buyUrl, otherBuyUrl, gameEditionUrl, allowOfflineFirstBind, disclaimerRaw, ipVersionRaw, configVersionRaw, site] = await Promise.all([
     getUpgradeLinks(),
     getSeatAddonMallUrl(),
     getClientBuyUrl(),
     getClientOtherBuyUrl(),
+    getGameEditionUrl(),
     getAllowOfflineFirstBind(),
     getConfigValue('disclaimer_version', '1'),
     getConfigValue('ip_resource_version', '1'),
@@ -127,6 +135,7 @@ export async function buildClientConfig(): Promise<ClientConfigView> {
     seatAddonMallUrl,
     buyUrl,
     otherBuyUrl,
+    gameEditionUrl,
     allowOfflineFirstBind,
     manualUrl: site.doc_url || '',
     manualTitle: site.doc_title || '使用手册',
@@ -148,6 +157,7 @@ export interface SaveMallConfigInput {
   seatAddonMallUrl?: string;
   buyUrl?: string;
   otherBuyUrl?: string;
+  gameEditionUrl?: string;
 }
 
 export interface SaveMallConfigResult {
@@ -161,9 +171,10 @@ export async function saveMallConfig(input: SaveMallConfigInput): Promise<SaveMa
     input.upgradeLinks === undefined &&
     input.seatAddonMallUrl === undefined &&
     input.buyUrl === undefined &&
-    input.otherBuyUrl === undefined
+    input.otherBuyUrl === undefined &&
+    input.gameEditionUrl === undefined
   ) {
-    throw new ApiError('至少需要提交升级码链接、扩容码商城链接、升企业版购买链接或商城购买链接', 400, 400);
+    throw new ApiError('至少需要提交升级码链接、扩容码商城链接、升企业版购买链接、商城购买链接或游戏版专题页链接', 400, 400);
   }
   if (input.upgradeLinks !== undefined) {
     const codeSet = new Set(listClientTiers().map((t) => t.code));
@@ -197,6 +208,13 @@ export async function saveMallConfig(input: SaveMallConfigInput): Promise<SaveMa
       throw new ApiError('商城购买链接必须以 http(s):// 开头', 400, 400);
     }
     await saveConfigValue('client_other_buy_url', url, '商城购买链接（激活/续费/授权页/个人中心购买卡密）');
+  }
+  if (input.gameEditionUrl !== undefined) {
+    const url = String(input.gameEditionUrl ?? '').trim();
+    if (url && !/^https?:\/\//i.test(url)) {
+      throw new ApiError('游戏版专题页链接必须以 http(s):// 开头', 400, 400);
+    }
+    await saveConfigValue('game_edition_url', url, '游戏版专题页链接（正式版客户端游戏版入口跳转）');
   }
   const nextVersion = parsePositive(await getConfigValue('config_version', '1'), 1) + 1;
   await saveConfigValue('config_version', String(nextVersion), '客户端配置版本号');

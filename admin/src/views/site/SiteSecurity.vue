@@ -8,8 +8,11 @@
         <span class="field-tip" style="margin-left: 10px">开启后官网前台显示维护提示，仅管理后台可正常访问。</span>
       </el-form-item>
       <el-form-item label="访问口令">
-        <el-input v-model="secForm.access_password" maxlength="64" show-password placeholder="留空表示不启用口令访问" style="max-width: 320px" />
-        <div class="field-tip">预留的整站访问口令（可选）。</div>
+        <el-input v-model="secForm.access_password" maxlength="64" show-password placeholder="留空表示不修改，输入新口令可覆盖" style="max-width: 320px" />
+        <el-checkbox v-model="secForm.access_password_clear" style="margin-left: 12px">清除口令</el-checkbox>
+        <div class="field-tip">
+          预留的整站访问口令（可选）。{{ secForm.access_password_set === '1' ? '当前已设置口令。' : '当前未设置口令。' }}
+        </div>
       </el-form-item>
       <el-form-item>
         <el-button type="primary" :loading="secSaving" @click="saveSecurity">保存</el-button>
@@ -92,14 +95,22 @@ import {
 // ============ 安全状态 ============
 const secLoading = ref(false)
 const secSaving = ref(false)
-const secForm = reactive({ maintenance_mode: '0', access_password: '' })
+const secForm = reactive({
+  maintenance_mode: '0',
+  access_password: '',
+  access_password_clear: false,
+  access_password_set: '0',
+})
 
 async function loadSecurity() {
   secLoading.value = true
   try {
     const data = await getSiteSecurity()
     secForm.maintenance_mode = data.maintenance_mode || '0'
-    secForm.access_password = data.access_password || ''
+    secForm.access_password_set = data.access_password_set || '0'
+    // 接口不回显明文，输入框始终从空开始（留空 = 不修改）
+    secForm.access_password = ''
+    secForm.access_password_clear = false
   } finally {
     secLoading.value = false
   }
@@ -108,7 +119,14 @@ async function loadSecurity() {
 async function saveSecurity() {
   secSaving.value = true
   try {
-    await updateSiteSecurity({ ...secForm })
+    const data = await updateSiteSecurity({
+      maintenance_mode: secForm.maintenance_mode,
+      access_password: secForm.access_password || undefined,
+      access_password_clear: secForm.access_password_clear,
+    })
+    secForm.access_password_set = data.access_password_set || '0'
+    secForm.access_password = ''
+    secForm.access_password_clear = false
     ElMessage.success('已保存')
   } catch {
     // 拦截器已提示

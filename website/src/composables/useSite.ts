@@ -7,6 +7,7 @@ import {
   type SiteNav,
   type SiteSettings,
 } from '@/api'
+import { safeUrl } from '@/utils/safeHtml'
 
 interface SiteState {
   settings: SiteSettings
@@ -62,10 +63,10 @@ export function useSite() {
 
   const siteName = computed(() => state.settings.site_name || 'eBox')
   const logo = computed(() => state.settings.site_logo || '/logo.png')
-  const purchaseUrl = computed(() => state.settings.purchase_url || '')
-  const docUrl = computed(() => state.settings.doc_url || '')
+  const purchaseUrl = computed(() => safeUrl(state.settings.purchase_url))
+  const docUrl = computed(() => safeUrl(state.settings.doc_url))
   const docTitle = computed(() => state.settings.doc_title || '使用手册')
-  const githubUrl = computed(() => state.settings.github_url || '')
+  const githubUrl = computed(() => safeUrl(state.settings.github_url))
   const copyright = computed(() => state.settings.copyright || '')
   const announcement = computed(() => {
     // 公告条数据来源统一为「公告管理」里最新一条已发布且未过期的公告
@@ -75,7 +76,7 @@ export function useSite() {
       id: n.id,
       text: n.title,
       detailUrl: `/articles/${encodeURIComponent(n.slug)}`,
-      linkUrl: n.linkUrl || '',
+      linkUrl: safeUrl(n.linkUrl),
     }
   })
 

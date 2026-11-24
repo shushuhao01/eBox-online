@@ -17,7 +17,7 @@
             <div class="contact-icon">{{ typeIcon(c.type) }}</div>
             <div class="contact-name">{{ c.name }}</div>
             <template v-if="isWechatService(c)">
-              <a v-if="c.value" class="wechat-btn" :href="c.value" target="_blank" rel="noopener">
+              <a v-if="c.value && safeUrl(c.value)" class="wechat-btn" :href="safeUrl(c.value)" target="_blank" rel="noopener">
                 <span class="wechat-btn-icon">💬</span> 点击直达微信客服
               </a>
               <div v-else-if="c.qrcode" class="contact-value">扫描下方二维码添加客服</div>
@@ -49,6 +49,7 @@
 import { onMounted, ref } from 'vue'
 import { getContacts, type SiteContact } from '@/api'
 import { usePageHead } from '@/composables/usePageHead'
+import { safeUrl } from '@/utils/safeHtml'
 
 usePageHead('联系我们', '通过客服、邮箱或社群与 eBox 取得联系。')
 

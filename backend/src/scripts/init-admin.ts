@@ -4,6 +4,7 @@ import { loadEnv } from './loadEnv';
 loadEnv();
 
 import bcrypt from 'bcryptjs';
+import { randomBytes } from 'crypto';
 import 'reflect-metadata';
 import { AppDataSource } from '../config/database';
 import { User } from '../entities/User';
@@ -17,8 +18,9 @@ async function main() {
   const username = arg('username') || 'admin';
   let password = arg('password') || '';
   if (!password) {
-    password = 'admin123';
-    console.log('⚠️  未指定 --password，使用默认密码 admin123（请尽快修改！）');
+    // 不再使用固定默认口令，改为生成随机初始密码并打印
+    password = randomBytes(9).toString('base64url');
+    console.log(`⚠️  未指定 --password，已生成随机初始密码：${password}（请登录后立即修改）`);
   }
   if (password.length < 6) {
     console.error('密码长度至少 6 位');

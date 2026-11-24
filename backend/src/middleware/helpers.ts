@@ -50,7 +50,8 @@ export async function authRequired(req: Request, res: Response, next: NextFuncti
     return;
   }
   try {
-    const decoded = jwt.verify(token, env.jwtSecret) as AuthPayload;
+    // 固定签名算法，防止 alg 混淆（none / 非对称）攻击
+    const decoded = jwt.verify(token, env.jwtSecret, { algorithms: ['HS256'] }) as AuthPayload;
     // 令牌版本 + 启用状态校验：改密 / 退出登录 / 停用后旧 token 立即失效
     const user = await AppDataSource.getRepository(User).findOne({
       where: { id: decoded.userId },

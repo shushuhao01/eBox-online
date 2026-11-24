@@ -17,12 +17,12 @@
           <p v-if="article.summary" class="article-summary">{{ article.summary }}</p>
           <img v-if="article.cover" :src="article.cover" :alt="article.title" class="article-cover" />
 
-          <article v-if="article.content" class="rich-content" v-html="article.content"></article>
+          <article v-if="contentHtml" class="rich-content" v-html="contentHtml"></article>
 
           <a
-            v-if="article.linkUrl"
+            v-if="linkUrl"
             class="article-link-btn"
-            :href="article.linkUrl"
+            :href="linkUrl"
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -51,6 +51,7 @@ import { useHead } from '@unhead/vue'
 import { getArticle, type RelatedArticle, type SiteArticle } from '@/api'
 import { useSite } from '@/composables/useSite'
 import { canonicalUrl, DEFAULT_KEYWORDS } from '@/composables/usePageHead'
+import { renderSafeHtml, safeUrl } from '@/utils/safeHtml'
 
 const route = useRoute()
 const { siteName, settings } = useSite()
@@ -58,6 +59,11 @@ const { siteName, settings } = useSite()
 const article = ref<SiteArticle | null>(null)
 const related = ref<RelatedArticle[]>([])
 const loading = ref(true)
+
+/** 正文按白名单清洗后再渲染，避免后台内容带来的存储型 XSS */
+const contentHtml = computed(() => renderSafeHtml(article.value?.content))
+/** 文章外链只允许常规协议，阻断 javascript: 等可执行链接 */
+const linkUrl = computed(() => safeUrl(article.value?.linkUrl))
 
 /** 页面关键词：优先取站点配置，构建期无配置时回退内置默认值 */
 const keywords = computed(() => settings.value.site_keywords || DEFAULT_KEYWORDS)

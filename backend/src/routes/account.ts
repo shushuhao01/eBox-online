@@ -60,7 +60,7 @@ const registerSchema = Joi.object({
   login: Joi.string().required().max(64),
   password: Joi.string().required().max(64),
   nickname: Joi.string().allow('').max(64),
-  email: Joi.string().allow('').max(128),
+  email: Joi.string().email({ tlds: { allow: false } }).allow('').max(128),
   phone: Joi.string().allow('').max(32),
   agreementVersion: Joi.number().integer().min(1).default(1),
   deviceFp: Joi.string().allow('').max(64).default(''),

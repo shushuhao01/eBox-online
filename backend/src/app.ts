@@ -154,7 +154,15 @@ app.get('/api/health', (_req, res) => {
 
 // ==================== 官网图片静态托管（后台媒体库上传，路径 /api/uploads/...） ====================
 const uploadRoot = process.env.SITE_UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
-app.use('/api/uploads', express.static(uploadRoot, { maxAge: '7d', fallthrough: true }));
+app.use('/api/uploads', express.static(uploadRoot, {
+  maxAge: '7d',
+  fallthrough: true,
+  setHeaders: (res) => {
+    // 上传目录含用户提供的 SVG：禁止以文档形式执行脚本，防止同源 XSS
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+  },
+}));
 
 // ==================== 营销邮件打开追踪（无需登录，返回 1x1 透明 GIF） ====================
 const OPEN_PIXEL_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');

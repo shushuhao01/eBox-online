@@ -22,6 +22,18 @@ import { onlineCount } from '../../services/NoticeBroadcaster';
 
 const router = Router();
 
+/** 仅超管可修改的连接 / 推送类配置：被低权管理员改写可导致凭据外泄或 SSRF */
+const SUPER_ADMIN_KEYS = new Set([
+  'smtp_host',
+  'smtp_port',
+  'smtp_user',
+  'smtp_from',
+  'notify_dingtalk_url',
+  'notify_wecom_url',
+  'notify_email_to',
+  'notify_sms_phone',
+]);
+
 const schema = Joi.object({
   heartbeat_interval_hours: Joi.number().integer().min(1).max(24).optional(),
   offline_grace_days: Joi.number().integer().min(1).max(30).optional(),
@@ -111,12 +123,16 @@ router.get('/', async (_req, res) => {
 router.put('/', async (req, res) => {
   const { error, value } = schema.validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
-  // 密钥类配置只允许超管修改（role === 1）
+  // 密钥类与连接类配置只允许超管修改（role === 1）
   if (req.auth!.role !== 1) {
+    const currentAll = await getConfigAll();
     for (const [k, v] of Object.entries(value)) {
       const text = String(v);
       if (SECRET_KEYS.has(k) && text !== '' && text !== '__SET__') {
         return fail(res, '仅超级管理员可修改密钥类配置', 403);
+      }
+      if (SUPER_ADMIN_KEYS.has(k) && text !== String(currentAll[k] ?? '')) {
+        return fail(res, '仅超级管理员可修改邮件 / 推送连接配置', 403);
       }
     }
   }

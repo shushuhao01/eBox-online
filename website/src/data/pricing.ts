@@ -58,6 +58,7 @@ export const plans: PricingPlan[] = [
   },
 ]
 
+
 export interface EntitlementRow {
   name: string
   normal: string

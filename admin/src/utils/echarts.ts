@@ -30,3 +30,30 @@ export const AXIS_TEXT = '#6B7280'
 
 /** 生成默认折线/柱状系列颜色 */
 export const LINE_COLORS = ['#3A7AFE', '#22C55E']
+
+/** 游戏版版本线：主版本号 ≥ 5（正式版为 4.x） */
+export function isGameVersion(version: string): boolean {
+  const major = Number.parseInt(version.replace(/^v/i, '').split('.')[0], 10)
+  return Number.isFinite(major) && major >= 5
+}
+
+/** 版本分布双色：正式版沿用原绿色渐变，游戏版橙色 */
+export const EDITION_COLORS = {
+  formal: ['#22C55E', '#86EFAC'],
+  game: ['#F59E0B', '#FCD34D'],
+}
+
+/** 生成纵向渐变（柱状图用） */
+export function verticalGradient(from: string, to: string) {
+  return {
+    type: 'linear' as const,
+    x: 0,
+    y: 0,
+    x2: 0,
+    y2: 1,
+    colorStops: [
+      { offset: 0, color: from },
+      { offset: 1, color: to },
+    ],
+  }
+}

@@ -21,12 +21,14 @@ export interface UpgradeLinksState {
   seatAddonMallUrl: string
   buyUrl: string
   otherBuyUrl: string
+  gameEditionUrl: string
   config: {
     disclaimerVersion: number
     upgradeLinks: Record<string, string>
     seatAddonMallUrl: string
     buyUrl: string
     otherBuyUrl: string
+    gameEditionUrl: string
     ipResourceVersion: number
     configVersion: number
     tiers: Array<{
@@ -96,6 +98,7 @@ export function saveUpgradeLinks(data: {
   seatAddonMallUrl?: string
   buyUrl?: string
   otherBuyUrl?: string
+  gameEditionUrl?: string
 }) {
   return put<UpgradeLinksState['config'] & { delivered: number }>('/upgrade-links', data)
 }

@@ -71,6 +71,33 @@
         </div>
       </el-form-item>
 
+      <div class="section-title">游戏版专题轮播图</div>
+      <el-form-item label="轮播配图">
+        <div class="hero-images">
+          <div v-for="(url, idx) in gameHeroImages" :key="url" class="hero-image-item">
+            <img :src="url" class="hero-image-thumb" />
+            <div class="hero-image-actions">
+              <el-button link size="small" :disabled="idx === 0" @click="moveGameImage(idx, -1)">上移</el-button>
+              <el-button link size="small" :disabled="idx === gameHeroImages.length - 1" @click="moveGameImage(idx, 1)">下移</el-button>
+              <el-button link type="danger" size="small" @click="removeGameImage(idx)">删除</el-button>
+            </div>
+          </div>
+          <el-upload
+            class="hero-image-upload"
+            :show-file-list="false"
+            :http-request="handleGameUpload"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+          >
+            <div class="hero-image-add" v-loading="gameUploading">
+              <span v-if="!gameUploading">+</span>
+            </div>
+          </el-upload>
+        </div>
+        <div class="field-tip">
+          展示在官网「游戏版」专题页首屏右侧，支持多张自动轮播；留空时专题页显示默认示意图。单张不超过 10MB。
+        </div>
+      </el-form-item>
+
       <div class="section-title">购买 / 仓库</div>
       <el-form-item label="购买地址">
         <el-input v-model="form.purchase_url" placeholder="点击购买跳转的外部地址（独立发卡站）" />
@@ -138,16 +165,18 @@
         </div>
       </el-form-item>
 
-      <div class="section-title">统计代码</div>
-      <el-form-item label="统计脚本">
-        <el-input
-          v-model="form.statistics_code"
-          type="textarea"
-          :rows="4"
-          placeholder="粘贴第三方统计（如百度统计 / 51LA）的 script 代码"
-        />
-        <div class="field-tip">该代码会原样插入官网前台页面，请仅填写可信来源的代码。</div>
-      </el-form-item>
+      <template v-if="userStore.isSuperAdmin">
+        <div class="section-title">统计代码</div>
+        <el-form-item label="统计脚本">
+          <el-input
+            v-model="form.statistics_code"
+            type="textarea"
+            :rows="4"
+            placeholder="粘贴第三方统计（如百度统计 / 51LA）的 script 代码"
+          />
+          <div class="field-tip">该代码会原样插入官网前台页面，请仅填写可信来源的代码；仅超级管理员可修改。</div>
+        </el-form-item>
+      </template>
     </el-form>
 
     <div class="panel-footer">
@@ -162,10 +191,14 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElNotification } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
 import { getSiteSettings, updateSiteSettings, uploadSiteImage, pushSeoAll } from '@/api/site'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
 
 const loading = ref(false)
 const saving = ref(false)
 const uploading = ref(false)
+const gameUploading = ref(false)
 const pushing = ref(false)
 
 /** 是否开启新建/发布文章时自动推送（存储为字符串 '1'/'0'） */
@@ -181,6 +214,7 @@ const form = reactive({
   home_hero_title: '',
   home_hero_subtitle: '',
   home_hero_images: '[]',
+  game_hero_images: '[]',
   purchase_url: '',
   github_url: '',
   icp: '',
@@ -196,6 +230,8 @@ const form = reactive({
 
 /** 首页轮播配图列表（保存时序列化到 form.home_hero_images） */
 const heroImages = ref<string[]>([])
+/** 游戏版专题页轮播配图（保存时序列化到 form.game_hero_images） */
+const gameHeroImages = ref<string[]>([])
 
 function parseImages(raw: string): string[] {
   if (!raw) return []
@@ -217,6 +253,7 @@ async function load() {
     }
     pushEnabled.value = (data.seo_push_enabled ?? '1') !== '0'
     heroImages.value = parseImages(form.home_hero_images)
+    gameHeroImages.value = parseImages(form.game_hero_images)
   } finally {
     loading.value = false
   }
@@ -246,10 +283,35 @@ function removeImage(index: number) {
   heroImages.value.splice(index, 1)
 }
 
+async function handleGameUpload(options: UploadRequestOptions) {
+  gameUploading.value = true
+  try {
+    const res = await uploadSiteImage(options.file as File)
+    gameHeroImages.value.push(res.url)
+    ElMessage.success('图片上传成功')
+  } catch {
+    // 拦截器已提示
+  } finally {
+    gameUploading.value = false
+  }
+}
+
+function moveGameImage(index: number, offset: number) {
+  const target = index + offset
+  if (target < 0 || target >= gameHeroImages.value.length) return
+  const list = gameHeroImages.value
+  ;[list[index], list[target]] = [list[target], list[index]]
+}
+
+function removeGameImage(index: number) {
+  gameHeroImages.value.splice(index, 1)
+}
+
 async function save() {
   saving.value = true
   try {
     form.home_hero_images = JSON.stringify(heroImages.value)
+    form.game_hero_images = JSON.stringify(gameHeroImages.value)
     await updateSiteSettings({ ...form, seo_push_enabled: pushEnabled.value ? '1' : '0' })
     ElMessage.success('站点设置已保存')
   } catch {

@@ -136,12 +136,23 @@ export function pushDocConfig(patch: { doc_title: string; doc_url: string; doc_t
   return post<DocPushResult>('/site/doc/push', patch)
 }
 
-export function getSiteSecurity() {
-  return get<{ maintenance_mode: string; access_password: string }>('/site/security')
+export interface SiteSecurity {
+  maintenance_mode: string
+  /** 是否已设置访问口令（不回显明文） */
+  access_password_set: string
 }
 
-export function updateSiteSecurity(data: { maintenance_mode: string; access_password: string }) {
-  return put<{ maintenance_mode: string; access_password: string }>('/site/security', data)
+export function getSiteSecurity() {
+  return get<SiteSecurity>('/site/security')
+}
+
+export function updateSiteSecurity(data: {
+  maintenance_mode: string
+  /** 留空表示不修改 */
+  access_password?: string
+  access_password_clear?: boolean
+}) {
+  return put<SiteSecurity>('/site/security', data)
 }
 
 // ==================== SEO 主动推送 ====================

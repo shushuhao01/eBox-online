@@ -60,14 +60,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { getContacts, type SiteContact } from '@/api'
+import { safeUrl } from '@/utils/safeHtml'
 
 const contacts = ref<SiteContact[]>([])
 const open = ref(false)
 
 const visible = computed(() => contacts.value.length > 0)
 const email = computed(() => contacts.value.find((c) => c.type === 'email' && c.value)?.value || '')
-const wechatLink = computed(
-  () => contacts.value.find((c) => c.type === 'wechat_service' && c.value)?.value || '',
+const wechatLink = computed(() =>
+  safeUrl(contacts.value.find((c) => c.type === 'wechat_service' && c.value)?.value),
 )
 const wechatQr = computed(
   () =>

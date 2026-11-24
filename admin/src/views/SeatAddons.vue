@@ -295,8 +295,8 @@
             <span class="text-secondary">保存后立即推送到在线客户端，无需重启</span>
           </div>
           <div class="text-secondary" style="margin-bottom: 12px">
-            以下三类链接互相独立、互不影响：升级码链接（升级弹窗购买升级码）、升企业版购买链接（升企业版弹窗「去商城购买」）、
-            商城购买链接（激活软件 / 续费 / 授权页面购买激活码 / 个人中心购买卡密）。
+            以下四类链接互相独立、互不影响：升级码链接（升级弹窗购买升级码）、升企业版购买链接（升企业版弹窗「去商城购买」）、
+            商城购买链接（激活软件 / 续费 / 授权页面购买激活码 / 个人中心购买卡密）、游戏版专题页链接（正式版客户端「游戏版」入口）。
           </div>
           <el-form label-width="150px" style="max-width: 760px">
             <el-form-item v-for="g in UPGRADE_DURATIONS" :key="g.key" :label="`${g.label} · 普通升级高级`">
@@ -345,6 +345,20 @@
                 <div class="text-secondary">
                   激活软件、续费、授权页面「购买激活码」、个人中心「购买卡密」等购买按钮跳转此链接；
                   与升级码、升企业版互不影响；留空则回退客户端内置购买页
+                </div>
+              </div>
+            </el-form-item>
+            <el-form-item label="游戏版专题页链接">
+              <div style="width: 100%">
+                <el-input
+                  v-model="gameEditionUrl"
+                  placeholder="https://www.example.com/game-intro"
+                  clearable
+                  style="width: 100%"
+                />
+                <div class="text-secondary">
+                  正式版客户端主界面顶部与设置页「游戏版」入口跳转此链接（仅正式版显示，游戏版不显示）；
+                  留空则客户端不显示游戏版入口
                 </div>
               </div>
             </el-form-item>
@@ -415,6 +429,8 @@ const seatAddonMallUrl = ref('')
 const buyUrl = ref('')
 // 商城购买链接：激活 / 续费 / 授权页购买 / 个人中心购买卡密
 const otherBuyUrl = ref('')
+// 游戏版专题页链接：正式版客户端「游戏版」入口跳转（空=不显示入口）
+const gameEditionUrl = ref('')
 const savingMall = ref(false)
 
 /** 固定档位 code：个人/企业 × 普通/高级 × 4 时长（价格 SKU 已移除） */
@@ -442,6 +458,7 @@ async function loadMallLink() {
   seatAddonMallUrl.value = state.seatAddonMallUrl || ''
   buyUrl.value = state.buyUrl || ''
   otherBuyUrl.value = state.otherBuyUrl || ''
+  gameEditionUrl.value = state.gameEditionUrl || ''
   for (const g of UPGRADE_DURATIONS) {
     const hit = tierCodesOf(g.key).find((code) => !!state.links[code])
     upgradeUrls[g.key] = hit ? state.links[hit] : ''
@@ -456,6 +473,7 @@ async function saveMallLink() {
       seatAddonMallUrl: seatAddonMallUrl.value.trim(),
       buyUrl: buyUrl.value.trim(),
       otherBuyUrl: otherBuyUrl.value.trim(),
+      gameEditionUrl: gameEditionUrl.value.trim(),
     })
     ElMessage.success(`已保存并推送（在线客户端 ${res.delivered} 个）`)
   } finally {

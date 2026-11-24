@@ -37,6 +37,7 @@
         </a>
 
         <div class="nav-actions">
+          <RouterLink class="nav-link nav-link-game" to="/game-intro" @click="menuOpen = false">游戏版</RouterLink>
           <RouterLink class="btn btn-primary" to="/download" @click="menuOpen = false">免费下载</RouterLink>
         </div>
       </nav>
@@ -135,7 +136,24 @@ function onBuy() {
   background: var(--primary-light);
 }
 
+.nav-link-game {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* 游戏版入口沿用首页导航样式，鼠标划过与选中态改为浅橙色 */
+.nav-link-game:hover,
+.nav-link-game.router-link-active {
+  background: #fff3e4;
+  color: #f59e0b;
+}
+
 .nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-left: 10px;
 }
 
@@ -185,7 +203,15 @@ function onBuy() {
   }
 
   .nav-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
     margin: 10px 0 0;
+  }
+
+  .nav-link-game {
+    justify-content: center;
+    padding: 12px 10px;
   }
 
   .nav-actions .btn {

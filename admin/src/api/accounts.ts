@@ -16,6 +16,8 @@ export interface AccountItem {
   enterpriseName: string | null
   /** 客户端版本：账号最近在线设备上报的 version，无设备时为 null */
   clientVersion: string | null
+  /** 客户端产品线：formal=正式版 game=游戏版，未绑卡时为 null */
+  clientProduct: 'formal' | 'game' | null
   /** 卡密档位：月卡/季卡/年卡/永久，未绑卡时为 null */
   keyPlan: string | null
   /** 身份版本：1=个人 2=企业（取当前生效卡密，无生效卡密时为 null） */

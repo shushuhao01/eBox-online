@@ -8,6 +8,7 @@ import {
   getSeatAddonMallUrl,
   getClientBuyUrl,
   getClientOtherBuyUrl,
+  getGameEditionUrl,
   saveMallConfig,
   buildClientConfig,
 } from '../../services/SkuService';
@@ -89,6 +90,7 @@ router.get('/upgrade-links', async (_req, res) => {
     seatAddonMallUrl: await getSeatAddonMallUrl(),
     buyUrl: await getClientBuyUrl(),
     otherBuyUrl: await getClientOtherBuyUrl(),
+    gameEditionUrl: await getGameEditionUrl(),
     config: await buildClientConfig(),
   });
 });
@@ -100,8 +102,9 @@ router.put('/upgrade-links', superAdminRequired, async (req, res) => {
     seatAddonMallUrl: Joi.string().allow('').max(512).optional(),
     buyUrl: Joi.string().allow('').max(512).optional(),
     otherBuyUrl: Joi.string().allow('').max(512).optional(),
+    gameEditionUrl: Joi.string().allow('').max(512).optional(),
   })
-    .or('links', 'seatAddonMallUrl', 'buyUrl', 'otherBuyUrl')
+    .or('links', 'seatAddonMallUrl', 'buyUrl', 'otherBuyUrl', 'gameEditionUrl')
     .validate(req.body);
   if (error) return fail(res, `参数错误：${error.message}`, 400);
   try {
@@ -110,6 +113,7 @@ router.put('/upgrade-links', superAdminRequired, async (req, res) => {
       seatAddonMallUrl: value.seatAddonMallUrl as string | undefined,
       buyUrl: value.buyUrl as string | undefined,
       otherBuyUrl: value.otherBuyUrl as string | undefined,
+      gameEditionUrl: value.gameEditionUrl as string | undefined,
     });
     await writeOperationLog(
       req.auth!.userId,
@@ -120,6 +124,7 @@ router.put('/upgrade-links', superAdminRequired, async (req, res) => {
         seatAddonMallUrl: value.seatAddonMallUrl ?? null,
         buyUrl: value.buyUrl ?? null,
         otherBuyUrl: value.otherBuyUrl ?? null,
+        gameEditionUrl: value.gameEditionUrl ?? null,
       }),
       clientIp(req)
     );
@@ -158,7 +163,7 @@ const upgradeCodeSchema = Joi.object({
 });
 
 // GET /api/admin/upgrade-codes
-router.get('/upgrade-codes', async (req, res) => {
+router.get('/upgrade-codes', superAdminRequired, async (req, res) => {
   const status = req.query.status === undefined || req.query.status === '' ? undefined : Number(req.query.status);
   ok(
     res,
@@ -223,7 +228,7 @@ const seatAddonSchema = Joi.object({
 });
 
 // GET /api/admin/seat-addons
-router.get('/seat-addons', async (req, res) => {
+router.get('/seat-addons', superAdminRequired, async (req, res) => {
   const status = req.query.status === undefined || req.query.status === '' ? undefined : Number(req.query.status);
   ok(
     res,

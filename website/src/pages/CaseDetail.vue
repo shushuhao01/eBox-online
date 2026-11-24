@@ -22,7 +22,7 @@
             </div>
           </div>
 
-          <article v-if="detail.content" class="rich-content" v-html="detail.content"></article>
+          <article v-if="contentHtml" class="rich-content" v-html="contentHtml"></article>
 
           <div class="detail-cta">
             <RouterLink class="btn btn-primary" to="/download">免费下载体验</RouterLink>
@@ -39,10 +39,14 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { getCaseDetail, type SiteCase } from '@/api'
 import { usePageHead } from '@/composables/usePageHead'
+import { renderSafeHtml } from '@/utils/safeHtml'
 
 const route = useRoute()
 const detail = ref<SiteCase | null>(null)
 const loading = ref(true)
+
+/** 正文按白名单清洗后再渲染，避免后台内容带来的存储型 XSS */
+const contentHtml = computed(() => renderSafeHtml(detail.value?.content))
 
 usePageHead(detail.value?.title || '案例详情', detail.value?.summary || '')
 
