@@ -65,8 +65,9 @@
               <el-tag
                 v-if="row.clientProduct"
                 size="small"
-                :type="row.clientProduct === 'game' ? 'warning' : 'info'"
                 effect="plain"
+                class="product-tag"
+                :class="row.clientProduct === 'game' ? 'is-game' : 'is-formal'"
               >
                 {{ row.clientProduct === 'game' ? '游戏版' : '正式版' }}
               </el-tag>
@@ -554,6 +555,26 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 2px;
+}
+.product-tag {
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 14px;
+  border-radius: 3px;
+}
+.product-tag :deep(.el-tag__content) {
+  line-height: 14px;
+}
+.product-tag.is-formal {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.product-tag.is-game {
+  color: #c2410c;
+  background: #fff7ed;
+  border-color: #fed7aa;
 }
 .danger {
   color: var(--danger-color);
