@@ -237,30 +237,8 @@
       </div>
     </section>
 
-    <!-- 配图放大查看 -->
-    <div v-if="lightboxIndex >= 0" class="lightbox" @click="closeLightbox">
-      <button class="lightbox-close" aria-label="关闭" @click.stop="closeLightbox">×</button>
-      <button
-        v-if="heroImages.length > 1"
-        class="lightbox-nav prev"
-        aria-label="上一张"
-        @click.stop="prevImage"
-      >
-        ‹
-      </button>
-      <img :src="heroImages[lightboxIndex]" class="lightbox-img" alt="" @click.stop />
-      <button
-        v-if="heroImages.length > 1"
-        class="lightbox-nav next"
-        aria-label="下一张"
-        @click.stop="nextImage"
-      >
-        ›
-      </button>
-      <div v-if="heroImages.length > 1" class="lightbox-count">
-        {{ lightboxIndex + 1 }} / {{ heroImages.length }}
-      </div>
-    </div>
+    <!-- 配图放大查看（与游戏版专题页共用组件） -->
+    <ImageLightbox v-model:index="lightboxIndex" :images="heroImages" />
   </div>
 </template>
 
@@ -269,6 +247,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { getCaseList, getLatestRelease, track, type LatestRelease, type SiteCase } from '@/api'
 import ArticlePinned from '@/components/ArticlePinned.vue'
 import BrandWall from '@/components/BrandWall.vue'
+import ImageLightbox from '@/components/ImageLightbox.vue'
 import { useSite } from '@/composables/useSite'
 import { usePageHead } from '@/composables/usePageHead'
 
@@ -312,29 +291,6 @@ function openLightbox(idx: number) {
   lightboxIndex.value = idx
 }
 
-function closeLightbox() {
-  lightboxIndex.value = -1
-}
-
-function prevImage() {
-  const len = heroImages.value.length
-  if (len < 2) return
-  lightboxIndex.value = (lightboxIndex.value - 1 + len) % len
-}
-
-function nextImage() {
-  const len = heroImages.value.length
-  if (len < 2) return
-  lightboxIndex.value = (lightboxIndex.value + 1) % len
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if (lightboxIndex.value < 0) return
-  if (e.key === 'Escape') closeLightbox()
-  else if (e.key === 'ArrowLeft') prevImage()
-  else if (e.key === 'ArrowRight') nextImage()
-}
-
 watch(
   () => heroImages.value.length,
   (len) => {
@@ -349,12 +305,10 @@ onMounted(() => {
       activeIndex.value = (activeIndex.value + 1) % heroImages.value.length
     }
   }, 4000)
-  window.addEventListener('keydown', onKeydown)
 })
 
 onUnmounted(() => {
   if (slideTimer) window.clearInterval(slideTimer)
-  window.removeEventListener('keydown', onKeydown)
 })
 
 const features = [
@@ -528,83 +482,6 @@ onMounted(async () => {
   width: 26px;
   border-color: var(--primary-color);
   background: var(--primary-color);
-}
-
-.lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 56px;
-  background: rgba(0, 0, 0, 0.88);
-  cursor: zoom-out;
-}
-
-.lightbox-img {
-  max-width: 100%;
-  max-height: 100%;
-  border-radius: 8px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
-  cursor: default;
-}
-
-.lightbox-close,
-.lightbox-nav {
-  position: absolute;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-
-.lightbox-close:hover,
-.lightbox-nav:hover {
-  background: rgba(255, 255, 255, 0.32);
-}
-
-.lightbox-close {
-  top: 20px;
-  right: 24px;
-  width: 42px;
-  height: 42px;
-  font-size: 26px;
-  line-height: 1;
-}
-
-.lightbox-nav {
-  top: 50%;
-  transform: translateY(-50%);
-  width: 52px;
-  height: 52px;
-  padding-bottom: 4px;
-  font-size: 34px;
-  line-height: 1;
-}
-
-.lightbox-nav.prev {
-  left: 24px;
-}
-
-.lightbox-nav.next {
-  right: 24px;
-}
-
-.lightbox-count {
-  position: absolute;
-  left: 50%;
-  bottom: 22px;
-  transform: translateX(-50%);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 14px;
-  letter-spacing: 1px;
 }
 
 .hero-card {

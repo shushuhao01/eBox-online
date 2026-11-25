@@ -33,6 +33,7 @@
                 :src="img"
                 :alt="`游戏版专题图 ${i + 1}`"
                 class="game-carousel-img"
+                @click="openLightbox(i)"
               />
             </div>
             <div v-if="heroImages.length > 1" class="game-carousel-dots">
@@ -258,12 +259,16 @@
         </div>
       </div>
     </section>
+
+    <!-- 专题图放大查看（与首页共用组件） -->
+    <ImageLightbox v-model:index="lightboxIndex" :images="heroImages" alt="游戏版专题图" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { getLatestRelease, track, type LatestRelease } from '@/api'
+import ImageLightbox from '@/components/ImageLightbox.vue'
 import { useSite } from '@/composables/useSite'
 import { usePageHead } from '@/composables/usePageHead'
 import { safeUrl } from '@/utils/safeHtml'
@@ -289,7 +294,12 @@ const heroImages = computed<string[]>(() => {
   }
 })
 const current = ref(0)
+const lightboxIndex = ref(-1)
 let carouselTimer: number | undefined
+
+function openLightbox(idx: number) {
+  lightboxIndex.value = idx
+}
 
 function stopCarousel() {
   if (carouselTimer) {
@@ -484,6 +494,7 @@ onBeforeUnmount(stopCarousel)
   aspect-ratio: 16 / 10;
   object-fit: cover;
   display: block;
+  cursor: zoom-in;
 }
 
 .game-carousel-dots {
