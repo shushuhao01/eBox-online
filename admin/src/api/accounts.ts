@@ -29,7 +29,7 @@ export interface AccountItem {
 }
 
 export interface AccountMetrics {
-  accounts: { total: number; todayNew: number; locked: number; lockTotal: number; disabled: number; lockedRate: number }
+  accounts: { total: number; todayNew: number; locked: number; lockTotal: number; disabled: number; bound: number; lockedRate: number }
   enterprises: { total: number; expiring7: number; expired: number }
   ipResources: { total: number; abnormal: number; abnormalRate: number; activeBindings: number }
   vouchers: { upgradeUsed7: number; seatUsed7: number }

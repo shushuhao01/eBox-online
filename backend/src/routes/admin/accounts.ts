@@ -71,6 +71,7 @@ router.get('/metrics', async (_req, res) => {
       accountsLocked,
       accountsLockTotal,
       accountsDisabled,
+      accountsBound,
       entTotal,
       entExpiring7,
       entExpired,
@@ -85,6 +86,14 @@ router.get('/metrics', async (_req, res) => {
       scalar('SELECT COUNT(*) AS v FROM accounts WHERE status = 3 OR (locked_until IS NOT NULL AND locked_until > NOW())'),
       scalar('SELECT COALESCE(SUM(lock_count), 0) AS v FROM accounts'),
       scalar('SELECT COUNT(*) AS v FROM accounts WHERE status = 2'),
+      // 有效用户：已完成卡密绑定的账号（个人绑卡 + 有效企业成员，去重）
+      scalar(`SELECT COUNT(*) AS v FROM (
+        SELECT account_id FROM license_keys WHERE account_id IS NOT NULL AND status IN (1, 3)
+        UNION
+        SELECT m.account_id FROM enterprise_members m
+          JOIN enterprises e ON e.id = m.enterprise_id
+          WHERE m.status = 1 AND e.status = 1 AND (e.expire_at IS NULL OR e.expire_at > NOW())
+      ) t`),
       scalar('SELECT COUNT(*) AS v FROM enterprises'),
       scalar('SELECT COUNT(*) AS v FROM enterprises WHERE expire_at IS NOT NULL AND expire_at > NOW() AND expire_at <= DATE_ADD(NOW(), INTERVAL 7 DAY)'),
       scalar('SELECT COUNT(*) AS v FROM enterprises WHERE status = 3 OR (expire_at IS NOT NULL AND expire_at <= NOW())'),
@@ -101,6 +110,7 @@ router.get('/metrics', async (_req, res) => {
         locked: accountsLocked,
         lockTotal: accountsLockTotal,
         disabled: accountsDisabled,
+        bound: accountsBound,
         lockedRate: accountsTotal ? Number(((accountsLocked / accountsTotal) * 100).toFixed(2)) : 0,
       },
       enterprises: { total: entTotal, expiring7: entExpiring7, expired: entExpired },

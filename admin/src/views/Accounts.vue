@@ -21,7 +21,7 @@
 
     <!-- 运营指标 -->
     <div v-if="metrics" class="metric-row">
-      <div class="metric-card"><span class="metric-label">账号总数</span><span class="metric-value">{{ metrics.accounts.total }}</span></div>
+      <div class="metric-card"><span class="metric-label">账号总数</span><span class="metric-value">{{ metrics.accounts.total }} <small>有效用户 {{ metrics.accounts.bound }}</small></span></div>
       <div class="metric-card"><span class="metric-label">今日新增</span><span class="metric-value">{{ metrics.accounts.todayNew }}</span></div>
       <div class="metric-card"><span class="metric-label">锁定 / 锁定率</span><span class="metric-value warn">{{ metrics.accounts.locked }} <small>{{ metrics.accounts.lockedRate }}%</small></span></div>
       <div class="metric-card"><span class="metric-label">累计锁定次数</span><span class="metric-value">{{ metrics.accounts.lockTotal }}</span></div>
