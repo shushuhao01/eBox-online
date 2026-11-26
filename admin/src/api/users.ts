@@ -1,4 +1,4 @@
-import { get, post, put } from './request'
+import { get, post, put, del } from './request'
 
 export interface AdminUser {
   id: string
@@ -7,6 +7,9 @@ export interface AdminUser {
   role: number
   status: number
   lastLoginAt: string | null
+  lastLoginIp: string | null
+  /** 创始管理员（最早创建）：不可停用、不可删除、角色固定 */
+  isFounder: boolean
   createdAt: string
 }
 
@@ -28,4 +31,19 @@ export function changePassword(data: { oldPassword: string; newPassword: string 
 /** 停用/启用管理员（仅超管） */
 export function setUserStatus(id: string, status: 0 | 1) {
   return put<null>(`/users/${id}/status`, { status })
+}
+
+/** 编辑管理员资料（仅超管） */
+export function updateUser(id: string, data: { username?: string; nickname?: string | null; role?: 0 | 1 }) {
+  return put<null>(`/users/${id}`, data)
+}
+
+/** 重置管理员密码（仅超管，无需原密码） */
+export function resetUserPassword(id: string, newPassword: string) {
+  return put<null>(`/users/${id}/password`, { newPassword })
+}
+
+/** 删除管理员（仅超管） */
+export function deleteUser(id: string) {
+  return del<null>(`/users/${id}`)
 }
